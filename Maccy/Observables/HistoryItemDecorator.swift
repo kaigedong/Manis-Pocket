@@ -184,21 +184,44 @@ class HistoryItemDecorator: Identifiable, Hashable, HasVisibility {
         }
 
         var attributedString = AttributedString(title.shortened(to: 500))
+        // Search ranges use Unicode scalar offsets in the full title, while
+        // AttributedString indexes use grapheme-cluster characters. Build the
+        // mapping from the displayed (possibly shortened) title before indexing.
+        var scalarBoundaries = [0]
+        var scalarCount = 0
+        for character in attributedString.characters {
+            scalarCount += character.unicodeScalars.count
+            scalarBoundaries.append(scalarCount)
+        }
+        let characterCount = scalarBoundaries.count - 1
+
         for range in ranges {
-            let lower = attributedString.index(attributedString.startIndex, offsetByCharacters: Int(range.start))
-            let upper = attributedString.index(attributedString.startIndex, offsetByCharacters: Int(range.end))
-            if lower < upper, upper <= attributedString.endIndex {
-                switch Defaults[.highlightMatch] {
-                case .bold:
-                    attributedString[lower ..< upper].font = .bold(.body)()
-                case .italic:
-                    attributedString[lower ..< upper].font = .italic(.body)()
-                case .underline:
-                    attributedString[lower ..< upper].underlineStyle = .single
-                default:
-                    attributedString[lower ..< upper].backgroundColor = .findHighlightColor
-                    attributedString[lower ..< upper].foregroundColor = .black
-                }
+            guard let start = Int(exactly: range.start),
+                  let end = Int(exactly: range.end),
+                  start >= 0, end > start, start < scalarCount
+            else {
+                continue
+            }
+
+            let visibleEnd = min(end, scalarCount)
+            let lowerOffset = (scalarBoundaries.firstIndex { $0 > start } ?? characterCount) - 1
+            let upperOffset = scalarBoundaries.firstIndex { $0 >= visibleEnd } ?? characterCount
+            guard lowerOffset >= 0, lowerOffset < upperOffset else {
+                continue
+            }
+
+            let lower = attributedString.index(attributedString.startIndex, offsetByCharacters: lowerOffset)
+            let upper = attributedString.index(attributedString.startIndex, offsetByCharacters: upperOffset)
+            switch Defaults[.highlightMatch] {
+            case .bold:
+                attributedString[lower ..< upper].font = .bold(.body)()
+            case .italic:
+                attributedString[lower ..< upper].font = .italic(.body)()
+            case .underline:
+                attributedString[lower ..< upper].underlineStyle = .single
+            default:
+                attributedString[lower ..< upper].backgroundColor = .findHighlightColor
+                attributedString[lower ..< upper].foregroundColor = .black
             }
         }
 

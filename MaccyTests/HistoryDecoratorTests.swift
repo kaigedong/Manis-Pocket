@@ -142,6 +142,24 @@ class HistoryItemDecoratorTests: XCTestCase {
         XCTAssertEqual(itemDecorator.attributedTitle, nil)
     }
 
+    func testHighlightSkipsMatchBeyondDisplayedTitle() {
+        let itemDecorator = historyItemDecorator(String(repeating: "a", count: 600) + "z")
+
+        itemDecorator.highlight("z", [MatchRange(start: 600, end: 601)])
+
+        XCTAssertEqual(itemDecorator.attributedTitle, AttributedString(itemDecorator.title.shortened(to: 500)))
+    }
+
+    func testHighlightMapsUnicodeScalarRangesToCharacters() throws {
+        let itemDecorator = historyItemDecorator("e\u{301}x")
+
+        itemDecorator.highlight("x", [MatchRange(start: 2, end: 3)])
+
+        var expectedTitle = AttributedString("e\u{301}x")
+        try expectedTitle[XCTUnwrap(expectedTitle.range(of: "x"))].font = .bold(.body)()
+        XCTAssertEqual(itemDecorator.attributedTitle, expectedTitle)
+    }
+
     private func historyItemDecorator(
         _ value: String?,
         application: String? = "com.apple.finder"

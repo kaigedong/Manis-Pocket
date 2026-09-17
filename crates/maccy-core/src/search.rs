@@ -1,6 +1,6 @@
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 
 use crate::model::{ClipboardItem, MatchRange, SearchMode, SearchResult};
 
@@ -30,30 +30,27 @@ impl SearchEngine {
     }
 
     fn exact_search(query: &str, items: &[ClipboardItem]) -> Vec<SearchResult> {
+        let re = match RegexBuilder::new(&regex::escape(query))
+            .case_insensitive(true)
+            .build()
+        {
+            Ok(re) => re,
+            Err(_) => return vec![],
+        };
+
         items
             .iter()
             .filter_map(|item| {
                 let title = &item.title;
-                if let Some(byte_start) = title.to_lowercase().find(&query.to_lowercase()) {
-                    let char_start = title[..byte_start].chars().count();
-                    let matched_len = title[byte_start..].find(|c: char| !c.is_ascii()).map_or(
-                        query.len(),
-                        |_| {
-                            // Count chars in the matched range
-                            let end_byte = byte_start + query.len();
-                            if end_byte <= title.len() {
-                                title[byte_start..end_byte].chars().count()
-                            } else {
-                                title[byte_start..].chars().count()
-                            }
-                        },
-                    );
+                if let Some(matched) = re.find(title) {
+                    let start = title[..matched.start()].chars().count();
+                    let end = start + matched.as_str().chars().count();
                     Some(SearchResult {
                         item: item.clone(),
                         score: None,
                         ranges: vec![MatchRange {
-                            start: char_start as i64,
-                            end: (char_start + matched_len) as i64,
+                            start: start as i64,
+                            end: end as i64,
                         }],
                     })
                 } else {
@@ -69,13 +66,14 @@ impl SearchEngine {
         let mut results: Vec<SearchResult> = items
             .iter()
             .filter_map(|item| {
-                let mut title = item.title.clone();
-                if title.len() > FUZZY_SEARCH_LIMIT {
-                    title.truncate(FUZZY_SEARCH_LIMIT);
+                let title = &item.title;
+                let mut end = title.len().min(FUZZY_SEARCH_LIMIT);
+                while !title.is_char_boundary(end) {
+                    end -= 1;
                 }
 
                 matcher
-                    .fuzzy_indices(&title, query)
+                    .fuzzy_indices(&title[..end], query)
                     .map(|(score, indices)| {
                         let ranges = char_indices_to_ranges(&indices);
                         SearchResult {
@@ -140,7 +138,7 @@ impl SearchEngine {
     }
 }
 
-/// Convert byte indices from fuzzy matcher to character-based MatchRange list.
+/// Combine Unicode scalar indices from the fuzzy matcher into half-open ranges.
 fn char_indices_to_ranges(indices: &[usize]) -> Vec<MatchRange> {
     if indices.is_empty() {
         return vec![];
@@ -201,6 +199,29 @@ mod tests {
     }
 
     #[test]
+    fn test_exact_search_keeps_unicode_case_fold_ranges_in_original_title() {
+        let items = vec![make_item("1", "İa")];
+
+        let results = SearchEngine::search("a", &items, SearchMode::Exact);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].ranges[0].start, 1);
+        assert_eq!(results[0].ranges[0].end, 2);
+    }
+
+    #[test]
+    fn test_exact_search_treats_regex_symbols_as_literal_text() {
+        let items = vec![make_item("1", "a.b"), make_item("2", "axb")];
+
+        let results = SearchEngine::search(".", &items, SearchMode::Exact);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].item.id, "1");
+        assert_eq!(results[0].ranges[0].start, 1);
+        assert_eq!(results[0].ranges[0].end, 2);
+    }
+
+    #[test]
     fn test_fuzzy_search() {
         let items = vec![
             make_item("1", "Hello World"),
@@ -210,6 +231,15 @@ mod tests {
         let results = SearchEngine::search("hlo", &items, SearchMode::Fuzzy);
         assert!(!results.is_empty());
         assert_eq!(results[0].item.id, "1"); // "Hello" should match best
+    }
+
+    #[test]
+    fn test_fuzzy_search_truncates_on_a_utf8_boundary() {
+        let items = vec![make_item("1", &format!("{}🙂tail", "a".repeat(4_999)))];
+
+        let results = SearchEngine::search("a", &items, SearchMode::Fuzzy);
+
+        assert_eq!(results.len(), 1);
     }
 
     #[test]

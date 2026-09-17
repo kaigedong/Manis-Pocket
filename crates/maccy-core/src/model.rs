@@ -29,7 +29,7 @@ pub struct ClipboardItem {
     pub sync_deleted: bool,
 }
 
-/// Byte range for search result highlighting.
+/// Half-open Unicode scalar range in the original title for search highlighting.
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct MatchRange {
     pub start: i64,
@@ -42,7 +42,7 @@ pub struct SearchResult {
     pub item: ClipboardItem,
     /// Fuzzy match score (lower is better). None for exact/regex matches.
     pub score: Option<f64>,
-    /// Character ranges in the title that match the query.
+    /// Unicode scalar ranges in the original title that match the query.
     pub ranges: Vec<MatchRange>,
 }
 

@@ -1,7 +1,7 @@
 [workspace]
 members = [
-    "crates/maccy-core",
-    "crates/maccy-sync",
+    "crates/manis-pocket-core",
+    "crates/manis-pocket-sync",
 ]
 resolver = "2"
 

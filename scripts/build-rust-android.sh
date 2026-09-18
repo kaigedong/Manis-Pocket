@@ -26,16 +26,16 @@ for TARGET in "${TARGETS[@]}"; do
     -t "$TARGET" \
     -o android/app/src/main/jniLibs \
     build --release \
-    --package maccy-core
+    --package manis-pocket-core
 done
 
 echo "==> Generating UniFFI Kotlin bindings"
-LIB="android/app/src/main/jniLibs/arm64-v8a/libmaccy_core.so"
+LIB="android/app/src/main/jniLibs/arm64-v8a/libmanis_pocket_core.so"
 ls -lh "$LIB"
 
 cargo run --release \
   --bin uniffi-bindgen \
-  --package maccy-core \
+  --package manis-pocket-core \
   generate \
   --library "$LIB" \
   --language kotlin \
@@ -48,5 +48,5 @@ echo "==> Fixing UniFFI generated code"
 # CoreError subclasses have 'val `message`' that shadows Throwable.message.
 # Remove 'val' from constructor param so 'override val message' getter works alone.
 sed -i 's/val `message`: kotlin\.String/`message`: kotlin.String/g' \
-  android/app/src/main/java/com/kaigedong/maccy/maccy_core.kt
+  android/app/src/main/java/com/kaigedong/manispocket/manis_pocket_core.kt
 echo "✅ Android Rust build complete"

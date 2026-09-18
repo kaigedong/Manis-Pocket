@@ -12,14 +12,14 @@
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
-        android:label="Maccy"
+        android:label="Manis Pocket"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Maccy">
+        android:theme="@style/Theme.ManisPocket">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.Maccy">
+            android:theme="@style/Theme.ManisPocket">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

@@ -1,6 +1,6 @@
-project: Maccy.xcodeproj
+project: ManisPocket.xcodeproj
 retain_objc_accessible: true
 schemes:
-- Maccy
+- ManisPocket
 targets:
-- Maccy
+- ManisPocket

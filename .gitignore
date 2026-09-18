@@ -1,14 +1,14 @@
 # ── Xcode ─────────────────────────────────────────────────────────
 xcuserdata/
-Maccy.xcodeproj/project.xcworkspace/xcshareddata
-Maccy/build/
+ManisPocket.xcodeproj/project.xcworkspace/xcshareddata
+ManisPocket/build/
 build/
 
 # ── Rust ──────────────────────────────────────────────────────────
 target/
-maccy-sync/target/
-maccy-sync/Cargo.lock
-maccy-sync/maccy_sync.h
+manis-pocket-sync/target/
+manis-pocket-sync/Cargo.lock
+manis-pocket-sync/manis_pocket_sync.h
 
 # ── Android ───────────────────────────────────────────────────────
 android/.gradle/
@@ -22,7 +22,7 @@ android/local.properties
 # ── IDE / OS ──────────────────────────────────────────────────────
 .idea
 .DS_Store
-Maccy/.DS_Store
+ManisPocket/.DS_Store
 .sisyphus/
 .vscode/
 *.swp

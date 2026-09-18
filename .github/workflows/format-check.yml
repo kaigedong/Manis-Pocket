@@ -20,10 +20,10 @@ jobs:
         run: brew install swiftformat
 
       - name: Check Swift formatting
-        run: swiftformat --lint Maccy/ MaccyTests/ MaccyUITests/
+        run: swiftformat --lint ManisPocket/ ManisPocketTests/ ManisPocketUITests/
 
       - name: Check Kotlin formatting
         run: |
           curl -sSLO https://github.com/pinterest/ktlint/releases/download/1.5.0/ktlint
           chmod +x ktlint
-          ./ktlint 'android/**/*.kt' '!android/**/maccy_core.kt'
+          ./ktlint 'android/**/*.kt' '!android/**/manis_pocket_core.kt'

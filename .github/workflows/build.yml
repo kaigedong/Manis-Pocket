@@ -13,7 +13,7 @@ on:
 
 jobs:
   build-macos:
-    name: Build MaccyPlus (macOS)
+    name: Build Manis Pocket (macOS)
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -49,8 +49,8 @@ jobs:
       - name: Build
         run: |
           xcodebuild build \
-            -project Maccy.xcodeproj \
-            -scheme Maccy \
+            -project ManisPocket.xcodeproj \
+            -scheme ManisPocket \
             -configuration Release \
             -derivedDataPath build \
             -parallelizeTargets \
@@ -63,15 +63,15 @@ jobs:
             CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 
       - name: Package
-        run: cd build/Build/Products/Release && zip -r Maccy.app.zip Maccy.app
+        run: cd build/Build/Products/Release && zip -r ManisPocket.app.zip ManisPocket.app
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Maccy-macOS
-          path: build/Build/Products/Release/Maccy.app.zip
+          name: ManisPocket-macOS
+          path: build/Build/Products/Release/ManisPocket.app.zip
 
   build-android:
-    name: Build MaccyPlus (Android)
+    name: Build Manis Pocket (Android)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -113,7 +113,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Maccy-Android
+          name: ManisPocket-Android
           path: android/app/build/outputs/apk/debug/app-debug.apk
 
   release:
@@ -127,10 +127,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: Maccy-macOS
+          name: ManisPocket-macOS
       - uses: actions/download-artifact@v4
         with:
-          name: Maccy-Android
+          name: ManisPocket-Android
 
       - id: channel
         run: |
@@ -145,8 +145,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release delete latest-beta --yes --cleanup-tag 2>/dev/null || true
-          gh release create latest-beta Maccy.app.zip app-debug.apk \
-            --title "MaccyPlus Beta" \
+          gh release create latest-beta ManisPocket.app.zip app-debug.apk appcast-beta.xml \
+            --title "Manis Pocket Beta" \
             --notes "Automated beta build ($GITHUB_SHA)." \
             --prerelease
 
@@ -154,7 +154,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            Maccy.app.zip
+            ManisPocket.app.zip
             app-debug.apk
           generate_release_notes: true
         env:

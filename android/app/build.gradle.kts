@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.kaigedong.maccy"
+    namespace = "com.kaigedong.manispocket"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.kaigedong.maccy"
+        applicationId = "com.kaigedong.manispocket"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
@@ -20,7 +20,7 @@ android {
         create("dev") {
             storeFile = file("../debug.keystore")
             storePassword = "android"
-            keyAlias = "maccy"
+            keyAlias = "manispocket"
             keyPassword = "android"
         }
     }
@@ -85,7 +85,7 @@ tasks.register<Exec>("buildRustCoreArm64") {
         "-t", "arm64-v8a",
         "-o", "android/app/src/main/jniLibs",
         "build", "--release",
-        "--package", "maccy-core",
+        "--package", "manis-pocket-core",
     )
 }
 
@@ -93,12 +93,12 @@ tasks.register<Exec>("generateKotlinBindings") {
     dependsOn("buildRustCoreArm64")
     workingDir = file("../..")
     // Read .so from jniLibs (cargo ndk -o copies it there)
-    val libPath = file("src/main/jniLibs/arm64-v8a/libmaccy_core.so").absolutePath
+    val libPath = file("src/main/jniLibs/arm64-v8a/libmanis_pocket_core.so").absolutePath
     val outDir = file("src/main/java").absolutePath
     commandLine(
         "cargo", "run", "--release",
         "--bin", "uniffi-bindgen",
-        "--package", "maccy-core",
+        "--package", "manis-pocket-core",
         "generate",
         "--library", libPath,
         "--language", "kotlin",
@@ -109,7 +109,7 @@ tasks.register<Exec>("generateKotlinBindings") {
 tasks.register("fixUniffiCode") {
     dependsOn("generateKotlinBindings")
     doLast {
-        val f = file("src/main/java/com/kaigedong/maccy/maccy_core.kt")
+        val f = file("src/main/java/com/kaigedong/manispocket/manis_pocket_core.kt")
         var text = f.readText()
         // CoreError subclasses have 'val `message`' that conflicts with Throwable.message
         text = text.replace("val `message`: kotlin.String", "`message`: kotlin.String")

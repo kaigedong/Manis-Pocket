@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Maccy"
+rootProject.name = "ManisPocket"
 include(":app")

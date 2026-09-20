@@ -60,10 +60,25 @@ jobs:
             DEBUG_INFORMATION_FORMAT=dwarf \
             MARKETING_VERSION="${{ steps.version.outputs.version }}" \
             CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build_num }}" \
-            CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="-" \
+            DEVELOPMENT_TEAM="" \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES
 
-      - name: Package
-        run: cd build/Build/Products/Release && zip -r ManisPocket.app.zip ManisPocket.app
+      - name: Verify and package
+        run: |
+          APP="build/Build/Products/Release/ManisPocket.app"
+          ARCHIVE="build/Build/Products/Release/ManisPocket.app.zip"
+
+          codesign --verify --deep --strict --verbose=4 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1
+
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARCHIVE"
+
+          VERIFY_DIR="$(mktemp -d)"
+          ditto -x -k "$ARCHIVE" "$VERIFY_DIR"
+          codesign --verify --deep --strict --verbose=4 "$VERIFY_DIR/ManisPocket.app"
 
       - uses: actions/upload-artifact@v4
         with:

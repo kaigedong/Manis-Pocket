@@ -35,7 +35,7 @@
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
 	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/kaigedong/Maccy-plus/master/appcast.xml</string>
+	<string>https://raw.githubusercontent.com/kaigedong/Manis-Pocket/master/appcast.xml</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Manis Pocket uses the local network to discover nearby devices for clipboard sharing. Your clipboard data is encrypted and never leaves your local network.</string>
 	<key>NSBonjourServices</key>

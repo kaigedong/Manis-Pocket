@@ -2,7 +2,7 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
     <title>Manis Pocket Beta</title>
-    <link>https://github.com/kaigedong/Maccy-plus/releases/download/latest-beta/appcast-beta.xml</link>
+    <link>https://github.com/kaigedong/Manis-Pocket/releases/download/latest-beta/appcast-beta.xml</link>
     <description>Most recent beta changes with links to updates.</description>
     <language>en</language>
     <item>
@@ -11,7 +11,7 @@
       <pubDate>2026-06-10</pubDate>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <enclosure
-        url="https://github.com/kaigedong/Maccy-plus/releases/download/latest-beta/ManisPocket.app.zip"
+        url="https://github.com/kaigedong/Manis-Pocket/releases/download/latest-beta/ManisPocket.app.zip"
         sparkle:version="9999"
         sparkle:shortVersionString="9.9.9-beta"
         length="0"

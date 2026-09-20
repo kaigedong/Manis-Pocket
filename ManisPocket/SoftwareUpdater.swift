@@ -42,7 +42,7 @@ class SoftwareUpdater: NSObject, SPUUpdaterDelegate {
 
     func feedURLString(for _: SPUUpdater) -> String? {
         if Defaults[.betaUpdates] {
-            return "https://github.com/kaigedong/Maccy-plus/releases/download/latest-beta/appcast-beta.xml"
+            return "https://github.com/kaigedong/Manis-Pocket/releases/download/latest-beta/appcast-beta.xml"
         }
         // Return nil to use the default SUFeedURL from Info.plist
         return nil

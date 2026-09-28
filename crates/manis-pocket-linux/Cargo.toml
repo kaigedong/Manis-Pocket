@@ -1,0 +1,13 @@
+[package]
+name = "manis-pocket-linux"
+version = "0.1.0"
+edition.workspace = true
+description = "Native GTK4 desktop application for Manis Pocket on Linux"
+
+[[bin]]
+name = "manis-pocket"
+path = "src/main.rs"
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.10" }
+serde_json = "1"

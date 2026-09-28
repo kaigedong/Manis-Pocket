@@ -1,12 +1,14 @@
 # Manis Pocket AUR binary package
 
-`manis-pocket-bin` installs the Manis Pocket Wayland clipboard client at
+`manis-pocket-bin` installs the native GTK4 app `/usr/bin/manis-pocket`, its
+application menu entry and icon, and the Wayland sync backend at
 `/usr/bin/manis-pocket-wayland`. It repackages an immutable Arch Linux package
-from a GitHub release. The macOS GUI is not included.
+from a GitHub release.
 
 The runtime dependency on `wl-clipboard` supplies `wl-copy` and `wl-paste`.
-Pairing requires interactive PIN confirmation, so the package does not install
-a desktop entry or a system service.
+Open **Manis Pocket** from the application menu in a Wayland session, or run
+`manis-pocket` from a terminal. The GUI handles PIN confirmation. Closing its
+window keeps synchronization running; use **Quit** to stop it.
 
 ## Release flow
 
@@ -33,5 +35,5 @@ makepkg --printsrcinfo > .SRCINFO
 namcap manis-pocket-bin-*.pkg.tar.zst
 ```
 
-Run `manis-pocket-wayland --name "Linux Laptop"` in a Wayland session. See the
+Run `manis-pocket` in a Wayland session. See the
 project [README](../../README.md) for pairing and clipboard instructions.

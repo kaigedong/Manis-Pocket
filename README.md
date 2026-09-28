@@ -17,20 +17,22 @@ Manis Pocket 是轻量的剪贴板历史工具，支持快速搜索、固定常�
 
 ### macOS ↔ Linux Wayland 直接粘贴
 
-Linux 端使用 Rust 命令行客户端，不依赖 Tauri。先在 Wayland 会话中安装 `wl-clipboard`（提供 `wl-copy`、`wl-paste`），再从仓库构建：
+Linux 端使用原生 GTK4 图形应用和 Rust 同步引擎，不依赖 Tauri。Arch Linux 安装 `manis-pocket-bin` 后，从应用菜单打开 **Manis Pocket**，也可以在 Wayland 会话中运行 `manis-pocket`。窗口的 **History** 可搜索和重新复制文本，**Devices** 可发现、连接和配对设备。关闭窗口后同步仍在后台运行；重新从应用菜单打开窗口，点击 **Quit** 才会退出。
+
+从仓库构建时，先安装 GTK4 开发包和 `wl-clipboard`（提供 `wl-copy`、`wl-paste`）：
 
 ```sh
-cargo build --release -p manis-pocket-wayland
-./target/release/manis-pocket-wayland --name "Linux Laptop"
+cargo build --release -p manis-pocket-linux -p manis-pocket-wayland
+./target/release/manis-pocket
 ```
 
-Arch Linux 可用 [本地 PKGBUILD](packaging/archlinux/README.md) 构建安装；`manis-pocket-bin` [AUR 二进制包](packaging/aur/README.md) 将安装同一个 Wayland 命令行客户端。
+Arch Linux 可用 [本地 PKGBUILD](packaging/archlinux/README.md) 构建安装，或安装 [AUR 二进制包](packaging/aur/README.md)。`manis-pocket-wayland` 命令行客户端保留供调试和无图形界面时使用，不要与图形应用同时运行。
 
 Mac 端在设置中启用 **Clipboard Sync**。两台设备处于同一局域网时会通过 mDNS 发现；如发现失败，可在 Linux 端使用 `--connect MAC_IP:31774`，或在 Mac 的同步设置中手动连接 `LINUX_IP:31774`。确保 TCP 31774 可达。
 
-在 Mac 的 **Discovered Devices** 点击 **Pair**，或在 Linux 客户端输入 `peers` 查看设备 ID，再输入 `pair PEER_ID`。两端都会显示六位码；核对一致后在 Mac 点击 **Confirm**，在 Linux 输入 `confirm PEER_ID 六位码`。双方确认完成后，在任一设备复制纯文本，另一端的系统剪贴板会更新，可直接粘贴。Linux 客户端还支持 `reject PEER_ID`、`unpair PEER_ID` 和 `quit`。
+在 Mac 的 **Discovered Devices** 或 Linux 的 **Devices** 页面点击 **Pair**。两端都会显示六位码；核对一致后在两端点击 **Confirm**。双方确认完成后，在任一设备复制纯文本，另一端的系统剪贴板会更新，可直接粘贴。Linux 图形应用的历史记录保存在本机；命令行客户端仍支持 `peers`、`pair`、`confirm`、`reject`、`unpair` 和 `quit`。
 
-Linux 身份、已配对设备和当前剪贴板版本保存在 `~/.config/manis-pocket/`（或 `$XDG_CONFIG_HOME/manis-pocket/`）。新版配对协议要求重新配对旧设备。当前直接粘贴支持不超过 512 KiB 的 UTF-8 文本；重连时会比较版本并补齐当前值。清空剪贴板或复制不可共享内容会废止旧文本并清空对端剪贴板。历史记录仍只在本机管理，图片、文件和完整历史补齐尚未覆盖。文件下载入口暂时拒绝请求，避免远端按任意路径读取本机文件。
+Linux 身份、已配对设备和当前剪贴板版本保存在 `~/.config/manis-pocket/`（或 `$XDG_CONFIG_HOME/manis-pocket/`）；图形应用的文本历史保存在 `~/.local/share/manis-pocket/history.json`（或 `$XDG_DATA_HOME/manis-pocket/history.json`）。新版配对协议要求重新配对旧设备。当前直接粘贴支持不超过 512 KiB 的 UTF-8 文本；重连时会比较版本并补齐当前值。清空剪贴板或复制不可共享内容会废止旧文本并清空对端剪贴板。历史记录仍只在本机管理，图片、文件和完整历史补齐尚未覆盖。文件下载入口暂时拒绝请求，避免远端按任意路径读取本机文件。
 
 ## 开发
 

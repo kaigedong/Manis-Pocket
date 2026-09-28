@@ -1,9 +1,10 @@
 # Arch Linux package from this checkout
 
-This PKGBUILD builds the renamed Manis Pocket Wayland CLI from the current
-repository checkout. It installs `/usr/bin/manis-pocket-wayland` and the MIT
-license. `wl-clipboard` is a runtime dependency. No desktop entry or system
-service is installed because pairing requires interactive PIN confirmation.
+This PKGBUILD builds Manis Pocket for Linux from the current repository
+checkout. It installs the GTK4 app `/usr/bin/manis-pocket`, a desktop
+entry and icon, the sync backend `/usr/bin/manis-pocket-wayland`, and the MIT
+license. GTK4 and `wl-clipboard` are runtime dependencies. The GUI handles
+interactive PIN confirmation.
 
 On Arch Linux x86_64 with `base-devel` installed:
 

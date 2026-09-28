@@ -20,6 +20,14 @@ const MAX_TEXT_BYTES: usize = manis_pocket_sync::register::MAX_CLIPBOARD_TEXT_BY
 struct Options {
     name: String,
     connect: Option<String>,
+    gui_protocol: bool,
+}
+
+fn emit_gui(enabled: bool, event: serde_json::Value) {
+    if enabled {
+        println!("@@MANIS_POCKET_EVENT {event}");
+        let _ = io::stdout().flush();
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -85,6 +93,7 @@ async fn run(
         .map_err(|error| format!("Cannot initialize network: {error:?}"))?;
     manager.set_initial_paired_peers(paired.iter().cloned().collect());
     let network = tokio::spawn(async move { manager.run().await });
+    let gui_protocol = options.gui_protocol;
     if let Some(address) = options.connect {
         commands.send(SyncCommand::AddPeerAddress { address })?;
     }
@@ -104,10 +113,20 @@ async fn run(
     });
 
     let mut discovered = HashMap::<String, String>::new();
+    for peer_id in &paired {
+        emit_gui(
+            gui_protocol,
+            serde_json::json!({"type":"peer", "id":peer_id, "name":peer_id, "connected":false, "paired":true}),
+        );
+    }
     let initial_clipboard = read_wayland_text().await;
     let mut last_seen = initial_clipboard.as_ref().ok().cloned().flatten();
     let mut clipboard_initialized = initial_clipboard.is_ok();
     if let Ok(text) = initial_clipboard {
+        emit_gui(
+            gui_protocol,
+            serde_json::json!({"type":"clipboard", "text":text}),
+        );
         commands.send(SyncCommand::ObserveLocalClipboard { text })?;
     }
     let mut suppress_poll_until = None::<Instant>;
@@ -121,19 +140,23 @@ async fn run(
             Some(event) = events_rx.recv() => {
                 match event {
                     SyncEvent::PeerDiscovered { peer } => {
+                        emit_gui(gui_protocol, serde_json::json!({"type":"peer", "id":peer.peer_id, "name":peer.display_name, "connected":peer.is_connected, "paired":paired.contains(&peer.peer_id)}));
                         discovered.insert(peer.peer_id.clone(), peer.display_name.clone());
                         println!("peer {} {} ({})", peer.peer_id, peer.display_name,
                             if peer.is_connected { "connected" } else { "offline" });
                     }
                     SyncEvent::PeerLost { peer_id } => {
+                        emit_gui(gui_protocol, serde_json::json!({"type":"peer_lost", "id":peer_id}));
                         discovered.remove(&peer_id);
                         println!("peer {peer_id} left");
                     }
                     SyncEvent::PairingRequest { peer_id, display_name, pin } => {
+                        emit_gui(gui_protocol, serde_json::json!({"type":"pairing_request", "id":peer_id, "name":display_name, "pin":pin}));
                         println!("Pair with {display_name} ({peer_id})? Compare code {pin} on both devices.");
                         println!("Type: confirm {peer_id} {pin}  or  reject {peer_id}");
                     }
                     SyncEvent::PairingComplete { peer_id, success } => {
+                        emit_gui(gui_protocol, serde_json::json!({"type":"pairing_complete", "id":peer_id, "success":success}));
                         if success {
                             paired.insert(peer_id.clone());
                             save_pairs(&pairs_path, &paired)?;
@@ -158,6 +181,7 @@ async fn run(
                         };
                         match result {
                             Ok(()) => {
+                                emit_gui(gui_protocol, serde_json::json!({"type":"clipboard", "text":text}));
                                 last_seen = text;
                                 suppress_poll_until = Some(Instant::now() + Duration::from_secs(1));
                                 println!("Clipboard updated from {peer_id}");
@@ -169,13 +193,19 @@ async fn run(
                             }
                         }
                     }
-                    SyncEvent::Error { message, .. } => eprintln!("Sync error: {message}"),
-                    SyncEvent::Listening { address } => println!("Listening on {address}"),
+                    SyncEvent::Error { message, .. } => {
+                        emit_gui(gui_protocol, serde_json::json!({"type":"error", "message":message}));
+                        eprintln!("Sync error: {message}");
+                    }
+                    SyncEvent::Listening { address } => {
+                        emit_gui(gui_protocol, serde_json::json!({"type":"listening", "address":address}));
+                        println!("Listening on {address}");
+                    }
                     _ => {}
                 }
             }
             Some(line) = input_rx.recv() => {
-                if !handle_input(&line, &commands, &mut paired, &pairs_path, &discovered)? {
+                if !handle_input(&line, &commands, &mut paired, &pairs_path, &discovered, gui_protocol)? {
                     commands.send(SyncCommand::Shutdown)?;
                     break;
                 }
@@ -188,6 +218,7 @@ async fn run(
                 match read_wayland_text().await {
                     Ok(current) if !clipboard_initialized || last_seen != current => {
                         clipboard_initialized = true;
+                        emit_gui(gui_protocol, serde_json::json!({"type":"clipboard", "text":current}));
                         last_seen = current.clone();
                         commands.send(SyncCommand::ObserveLocalClipboard { text: current })?;
                     }
@@ -214,6 +245,7 @@ fn handle_input(
     paired: &mut HashSet<String>,
     pairs_path: &Path,
     discovered: &HashMap<String, String>,
+    gui_protocol: bool,
 ) -> Result<bool, Box<dyn Error>> {
     let words: Vec<&str> = line.split_whitespace().collect();
     match words.as_slice() {
@@ -247,6 +279,10 @@ fn handle_input(
             })?;
             paired.remove(*peer_id);
             save_pairs(pairs_path, paired)?;
+            emit_gui(
+                gui_protocol,
+                serde_json::json!({"type":"unpaired", "id":peer_id}),
+            );
             println!("Unpaired {peer_id}");
         }
         ["quit"] | ["exit"] => return Ok(false),
@@ -309,11 +345,13 @@ async fn write_wayland_text(text: &str) -> Result<(), Box<dyn Error>> {
 fn parse_options() -> Result<Options, Box<dyn Error>> {
     let mut name = std::env::var("HOSTNAME").unwrap_or_else(|_| "Linux Wayland".into());
     let mut connect = None;
+    let mut gui_protocol = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--name" => name = args.next().ok_or("--name needs a value")?,
             "--connect" => connect = Some(args.next().ok_or("--connect needs IP:PORT")?),
+            "--gui-protocol" => gui_protocol = true,
             "--help" | "-h" => {
                 println!("Usage: manis-pocket-wayland [--name NAME] [--connect IP:PORT]");
                 std::process::exit(0);
@@ -321,7 +359,11 @@ fn parse_options() -> Result<Options, Box<dyn Error>> {
             _ => return Err(format!("Unknown option: {arg}").into()),
         }
     }
-    Ok(Options { name, connect })
+    Ok(Options {
+        name,
+        connect,
+        gui_protocol,
+    })
 }
 
 fn config_dir() -> Result<PathBuf, Box<dyn Error>> {

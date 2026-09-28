@@ -75,8 +75,8 @@ jobs:
               "dist/$asset_name" "dist/$asset_name.sha256" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title "Manis Pocket Wayland $pkgver" \
-              --notes "Arch Linux Wayland clipboard client built and tested from $GITHUB_SHA." \
+              --title "Manis Pocket Linux $pkgver" \
+              --notes "Arch Linux GTK4 clipboard manager and Wayland sync client built and tested from $GITHUB_SHA." \
               --prerelease --latest=false
           fi
           echo "pkgver=$pkgver" >> "$GITHUB_OUTPUT"

@@ -11,14 +11,14 @@ on:
 
 jobs:
   build:
-    name: Build Wayland CLI on Arch x86_64
+    name: Build Linux GUI and Wayland sync on Arch x86_64
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     container:
       image: archlinux:base-devel
     steps:
       - name: Install build dependencies
-        run: pacman -Syu --noconfirm --needed git rust wl-clipboard namcap
+        run: pacman -Syu --noconfirm --needed git rust gtk4 wl-clipboard namcap
 
       - uses: actions/checkout@v4
         with:

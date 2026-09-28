@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use base64::Engine;
@@ -18,6 +19,43 @@ pub struct SyncEngine {
     connected_peers: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::SyncEngine;
+    use crate::model::{ClipboardContent, ClipboardItem};
+
+    #[test]
+    fn wire_item_contains_only_portable_text() {
+        let item = ClipboardItem {
+            id: "test-id".into(),
+            application: None,
+            first_copied_at: 1_700_000_000_000,
+            last_copied_at: 1_700_000_000_000,
+            number_of_copies: 1,
+            pin: None,
+            title: "hello".into(),
+            contents: vec![
+                ClipboardContent {
+                    content_type: "public.file-url".into(),
+                    value: Some(b"file:///private/path".to_vec()),
+                },
+                ClipboardContent {
+                    content_type: "public.utf8-plain-text".into(),
+                    value: Some(b"hello".to_vec()),
+                },
+            ],
+            sync_timestamp: 1_700_000_000_000,
+            sync_source: None,
+            sync_deleted: false,
+        };
+        let json = SyncEngine::serialize_item(&item).unwrap();
+        let wire: manis_pocket_sync::SyncItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(wire.contents.len(), 1);
+        assert_eq!(wire.contents[0].content_type, "text/plain;charset=utf-8");
+        assert!(!json.contains("private/path"));
+    }
+}
+
 impl SyncEngine {
     /// Create and start the sync engine.
     /// Spawns a background thread with its own tokio runtime for the libp2p network.
@@ -28,6 +66,7 @@ impl SyncEngine {
         observer: Arc<dyn ClipboardObserver>,
         stored_keypair: Option<Vec<u8>>,
         initial_paired_peer_ids: Vec<String>,
+        clipboard_store: Option<PathBuf>,
     ) -> Result<(Self, Vec<u8>), CoreError> {
         let sync_state = SyncState::new(device_name, device_id).map_err(|e| CoreError::Sync {
             msg: format!("Failed to create sync state: {:?}", e),
@@ -49,10 +88,40 @@ impl SyncEngine {
                 .replace(Box::new(move |json: &str| {
                     if let Ok(event) = serde_json::from_str::<SyncEvent>(json) {
                         match event {
-                            SyncEvent::ItemReceived { item_json } => {
-                                if let Ok(item) = Self::deserialize_item(&item_json) {
+                            SyncEvent::ItemReceived { item_json, peer_id } => {
+                                if let Ok(mut item) = Self::deserialize_item(&item_json) {
+                                    item.sync_source = Some(peer_id);
                                     obs.on_item_received(item);
                                 }
+                            }
+                            SyncEvent::CurrentClipboardReceived {
+                                event_id,
+                                peer_id,
+                                text,
+                            } => {
+                                let now = chrono::Utc::now().timestamp_millis();
+                                let contents = text
+                                    .clone()
+                                    .map(|text| {
+                                        vec![ClipboardContent {
+                                            content_type: "text/plain;charset=utf-8".into(),
+                                            value: Some(text.into_bytes()),
+                                        }]
+                                    })
+                                    .unwrap_or_default();
+                                obs.on_item_received(ClipboardItem {
+                                    id: event_id,
+                                    application: None,
+                                    first_copied_at: now,
+                                    last_copied_at: now,
+                                    number_of_copies: 1,
+                                    pin: None,
+                                    title: text.unwrap_or_default().chars().take(120).collect(),
+                                    contents,
+                                    sync_timestamp: now,
+                                    sync_source: Some(peer_id),
+                                    sync_deleted: false,
+                                });
                             }
                             SyncEvent::ItemDeleted { item_id } => {
                                 obs.on_item_deleted(item_id);
@@ -144,15 +213,28 @@ impl SyncEngine {
             })?;
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let net_state = state.clone();
+        let startup_observer = obs.clone();
 
         std::thread::spawn(move || {
             let rt = match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt,
                 Err(_) => return,
             };
-            let mut mgr = match NetworkManager::new(command_rx, net_state, local_key) {
+            let manager = match clipboard_store {
+                Some(path) => {
+                    NetworkManager::new_with_storage(command_rx, net_state, local_key, path)
+                }
+                None => NetworkManager::new(command_rx, net_state, local_key),
+            };
+            let mut mgr = match manager {
                 Ok(m) => m,
-                Err(_) => return,
+                Err(error) => {
+                    startup_observer.on_error(
+                        error as i32,
+                        "Cannot initialize clipboard network or state".into(),
+                    );
+                    return;
+                }
             };
             // Restore paired peers so incoming sync messages aren't dropped after restart.
             mgr.set_initial_paired_peers(initial_paired_peer_ids);
@@ -235,8 +317,34 @@ impl SyncEngine {
     // ── Broadcast ─────────────────────────────────────────────────
 
     pub fn broadcast_item(&self, item: &ClipboardItem) {
-        let json = Self::serialize_item(item);
-        self.send(SyncCommand::BroadcastItem { item_json: json });
+        let text = Self::portable_text(item);
+        self.observe_local_clipboard(text);
+    }
+
+    pub fn observe_local_clipboard(&self, text: Option<String>) {
+        self.send(SyncCommand::ObserveLocalClipboard { text });
+    }
+
+    pub fn confirm_current_clipboard(&self, event_id: &str, success: bool) {
+        self.send(SyncCommand::CurrentClipboardApplied {
+            event_id: event_id.to_owned(),
+            success,
+        });
+    }
+
+    pub fn should_apply_current_clipboard(&self, event_id: &str) -> bool {
+        let (reply, result) = tokio::sync::oneshot::channel();
+        if self
+            .command_tx
+            .send(SyncCommand::ShouldApplyCurrentClipboard {
+                event_id: event_id.to_owned(),
+                reply,
+            })
+            .is_err()
+        {
+            return false;
+        }
+        result.blocking_recv().unwrap_or(false)
     }
 
     pub fn broadcast_deletion(&self, item_id: &str) {
@@ -246,8 +354,9 @@ impl SyncEngine {
     }
 
     pub fn broadcast_update(&self, item: &ClipboardItem) {
-        let json = Self::serialize_item(item);
-        self.send(SyncCommand::BroadcastUpdate { item_json: json });
+        if let Some(json) = Self::serialize_item(item) {
+            self.send(SyncCommand::BroadcastUpdate { item_json: json });
+        }
     }
 
     // ── File transfer ────────────────────────────────────────────
@@ -269,7 +378,28 @@ impl SyncEngine {
 
     // ── Serialization ────────────────────────────────────────────
 
-    fn serialize_item(item: &ClipboardItem) -> String {
+    fn portable_text(item: &ClipboardItem) -> Option<String> {
+        // Clipboard protocol v3 transfers plain UTF-8 text only. Native pasteboard
+        // formats can be large, platform-specific, or contain file paths.
+        let text = item
+            .contents
+            .iter()
+            .find(|content| {
+                matches!(
+                    content.content_type.as_str(),
+                    "public.utf8-plain-text" | "text/plain" | "text/plain;charset=utf-8"
+                )
+            })?
+            .value
+            .as_ref()?;
+        if text.is_empty() || text.len() > manis_pocket_sync::register::MAX_CLIPBOARD_TEXT_BYTES {
+            return None;
+        }
+        String::from_utf8(text.clone()).ok()
+    }
+
+    fn serialize_item(item: &ClipboardItem) -> Option<String> {
+        let text = Self::portable_text(item)?;
         let sync_item = manis_pocket_sync::SyncItem {
             id: item.id.clone(),
             application: item.application.clone(),
@@ -278,21 +408,14 @@ impl SyncEngine {
             number_of_copies: item.number_of_copies as i64,
             pin: item.pin.clone(),
             title: item.title.clone(),
-            contents: item
-                .contents
-                .iter()
-                .map(|c| manis_pocket_sync::SyncItemContent {
-                    content_type: c.content_type.clone(),
-                    value: c
-                        .value
-                        .as_ref()
-                        .map(|v| base64::engine::general_purpose::STANDARD.encode(v)),
-                })
-                .collect(),
+            contents: vec![manis_pocket_sync::SyncItemContent {
+                content_type: "text/plain;charset=utf-8".into(),
+                value: Some(base64::engine::general_purpose::STANDARD.encode(text.as_bytes())),
+            }],
             sync_timestamp: Self::format_timestamp(item.sync_timestamp),
             sync_source: item.sync_source.clone().unwrap_or_default(),
         };
-        serde_json::to_string(&sync_item).unwrap_or_default()
+        serde_json::to_string(&sync_item).ok()
     }
 
     fn deserialize_item(json: &str) -> Result<ClipboardItem, ()> {

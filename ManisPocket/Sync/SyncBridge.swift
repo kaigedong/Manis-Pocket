@@ -11,12 +11,37 @@ import Foundation
 class ManisPocketSyncObserver: ClipboardObserver {
     func onItemReceived(item: ClipboardItem) {
         Task { @MainActor in
+            guard AppState.shared.history.core.syncShouldApplyCurrentClipboard(eventId: item.id) else {
+                AppState.shared.history.core.syncConfirmCurrentClipboard(eventId: item.id, success: false)
+                return
+            }
+            if item.contents.isEmpty {
+                Clipboard.shared.clearFromSync()
+                AppState.shared.history.core.syncConfirmCurrentClipboard(eventId: item.id, success: true)
+                return
+            }
+            var received = item
+            // Linux and Android use MIME names; AppKit expects its string UTI.
+            received.contents = item.contents.map { content in
+                var normalized = content
+                if normalized.contentType == "text/plain" || normalized.contentType == "text/plain;charset=utf-8" {
+                    normalized.contentType = NSPasteboard.PasteboardType.string.rawValue
+                }
+                return normalized
+            }
             // MUST set this before add(): add() reads it to decide whether to
             // rebroadcast. Setting it afterwards (as it used to be) let every
             // received item be echoed back, causing runaway duplicate broadcasts.
             History.shared.syncBroadcastToPeers = false
-            NSLog("[Sync] onItemReceived id=\(item.id) title=\(item.title.prefix(40)) contents=\(item.contents.map { "\($0.contentType):\($0.value?.count ?? 0)" })")
-            _ = History.shared.add(item, shouldAppend: false)
+            History.shared.add(received, shouldAppend: false)
+            History.shared.syncBroadcastToPeers = true
+            guard let text = Clipboard.shared.getText(from: received) else {
+                AppState.shared.history.core.syncConfirmCurrentClipboard(eventId: item.id, success: false)
+                return
+            }
+            Clipboard.shared.copy(received, fromSync: true)
+            let applied = NSPasteboard.general.string(forType: .string) == text
+            AppState.shared.history.core.syncConfirmCurrentClipboard(eventId: item.id, success: applied)
         }
     }
 
@@ -144,6 +169,7 @@ class SyncBridge {
         }
 
         isStarted = true
+        observeLocalClipboard(NSPasteboard.general.string(forType: .string))
         NSLog("[Sync] started (via HistoryManager)")
     }
 
@@ -187,6 +213,11 @@ class SyncBridge {
 
     func broadcastNewItem(_ item: ClipboardItem) {
         AppState.shared.history.core.syncBroadcastItem(item: item)
+    }
+
+    func observeLocalClipboard(_ text: String?) {
+        guard isStarted else { return }
+        AppState.shared.history.core.syncObserveLocalClipboard(text: text)
     }
 
     func broadcastDeletion(_ syncID: UUID) {

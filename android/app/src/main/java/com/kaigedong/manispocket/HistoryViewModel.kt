@@ -1,6 +1,9 @@
 package com.kaigedong.manispocket
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
+import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -71,12 +74,41 @@ class HistoryViewModel : ViewModel() {
                 onItemReceivedCb = { item ->
                     LogManager.i("Sync", "Received item: ${item.title.take(80)}")
                     viewModelScope.launch {
+                        var applied = false
                         try {
-                            core.add(item, maxSize = 500, isUnlimited = false)
-                            loadItems()
+                            if (core.syncShouldApplyCurrentClipboard(item.id)) {
+                                val context = appContext ?: error("App context unavailable")
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val text =
+                                    item.contents
+                                        .firstOrNull { content ->
+                                            content.contentType == "text/plain;charset=utf-8" ||
+                                                content.contentType == "text/plain"
+                                        }?.value
+                                        ?.toString(Charsets.UTF_8)
+                                if (text == null) {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                        clipboard.clearPrimaryClip()
+                                    } else {
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Manis Pocket", ""))
+                                    }
+                                    applied = true
+                                } else {
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Manis Pocket", text))
+                                    applied = clipboard.primaryClip
+                                        ?.getItemAt(0)
+                                        ?.text
+                                        ?.toString() == text
+                                    if (applied) {
+                                        core.add(item, maxSize = 500, isUnlimited = false)
+                                        loadItems()
+                                    }
+                                }
+                            }
                         } catch (e: Exception) {
-                            LogManager.e("Sync", "Failed to add synced item", e)
+                            LogManager.e("Sync", "Failed to apply synced clipboard", e)
                         }
+                        core.syncConfirmCurrentClipboard(item.id, applied)
                     }
                 },
                 onItemDeletedCb = { itemId ->
@@ -152,6 +184,19 @@ class HistoryViewModel : ViewModel() {
 
         try {
             core.startSync(deviceName, id, syncObserver!!)
+            val clipboard = appContext?.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            val initialText =
+                try {
+                    clipboard
+                        ?.primaryClip
+                        ?.getItemAt(0)
+                        ?.text
+                        ?.toString()
+                } catch (e: Exception) {
+                    LogManager.e("Sync", "Cannot read initial clipboard", e)
+                    null
+                }
+            core.syncObserveLocalClipboard(initialText)
             _syncEnabled.value = true
             // Persist so sync auto-starts on next launch.
             appContext
@@ -298,15 +343,9 @@ class HistoryViewModel : ViewModel() {
             core?.let { manager ->
                 try {
                     val result = manager.add(item, maxSize = 500, isUnlimited = false)
-                    // Only broadcast genuinely-new items. core.add returns the same id
-                    // for a new item but a different (existing) id when it deduped —
-                    // rebroadcasting the deduped item would loop the same item to peers.
-                    if (result.id == item.id) {
-                        manager.syncBroadcastItem(result)
-                        LogManager.i("Sync", "Broadcast new item id=${item.id.take(8)} title=${item.title.take(40)}")
-                    } else {
-                        LogManager.i("Sync", "Skipped broadcast (dedup of ${result.id.take(8)}): ${item.title.take(40)}")
-                    }
+                    // The current clipboard changes even when history deduplicates the item.
+                    manager.syncBroadcastItem(item)
+                    LogManager.i("Sync", "Observed clipboard id=${result.id.take(8)} title=${item.title.take(40)}")
                     LogManager.d("History", "Added item: ${item.id.take(8)}...")
                 } catch (e: Exception) {
                     LogManager.e("History", "Failed to add item", e)
@@ -314,6 +353,10 @@ class HistoryViewModel : ViewModel() {
                 loadItems()
             }
         }
+    }
+
+    fun observeCurrentClipboard(text: String?) {
+        core?.syncObserveLocalClipboard(text)
     }
 
     fun deleteItem(id: String) {

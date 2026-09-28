@@ -7,6 +7,30 @@ pub struct Storage {
     conn: Connection,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::Storage;
+
+    #[test]
+    fn legacy_pairs_require_fresh_confirmation() {
+        let storage = Storage::open_in_memory().unwrap();
+        storage
+            .conn
+            .execute(
+                "INSERT INTO sync_pairs (peer_id, display_name, is_admin, protocol_version) VALUES ('legacy', 'Old device', 1, 1)",
+                [],
+            )
+            .unwrap();
+        assert!(storage.get_paired_peers().unwrap().is_empty());
+
+        storage
+            .save_paired_peer("legacy", "New device", true)
+            .unwrap();
+        let pairs = storage.get_paired_peers().unwrap();
+        assert_eq!(pairs, vec![("legacy".into(), "New device".into(), true)]);
+    }
+}
+
 impl Storage {
     pub fn open(path: &str) -> Result<Self, CoreError> {
         let conn = if path.is_empty() || path == ":memory:" {
@@ -129,6 +153,17 @@ impl Storage {
                 .map_err(|e| CoreError::Storage { msg: e.to_string() })?;
         }
 
+        if current_version < 5 {
+            // Legacy pairs were accepted before remote approval. Keep the rows
+            // for migration diagnostics, but require a fresh v2 pairing.
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE sync_pairs ADD COLUMN protocol_version INTEGER NOT NULL DEFAULT 1;
+                     INSERT INTO schema_version (version) VALUES (5);",
+                )
+                .map_err(|e| CoreError::Storage { msg: e.to_string() })?;
+        }
+
         Ok(())
     }
 
@@ -138,7 +173,7 @@ impl Storage {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT peer_id, display_name, is_admin != 0 FROM sync_pairs ORDER BY display_name",
+                "SELECT peer_id, display_name, is_admin != 0 FROM sync_pairs WHERE protocol_version >= 2 ORDER BY display_name",
             )
             .map_err(|e| CoreError::Storage { msg: e.to_string() })?;
         let rows = stmt
@@ -165,7 +200,7 @@ impl Storage {
     ) -> Result<(), CoreError> {
         self.conn
             .execute(
-                "INSERT OR REPLACE INTO sync_pairs (peer_id, display_name, is_admin) VALUES (?1, ?2, ?3)",
+                "INSERT OR REPLACE INTO sync_pairs (peer_id, display_name, is_admin, protocol_version) VALUES (?1, ?2, ?3, 2)",
                 rusqlite::params![peer_id, display_name, is_admin as i32],
             )
             .map_err(|e| CoreError::Storage { msg: e.to_string() })?;

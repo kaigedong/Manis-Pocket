@@ -70,6 +70,17 @@ pub enum SyncCommand {
     BroadcastItem {
         item_json: String,
     },
+    ObserveLocalClipboard {
+        text: Option<String>,
+    },
+    CurrentClipboardApplied {
+        event_id: String,
+        success: bool,
+    },
+    ShouldApplyCurrentClipboard {
+        event_id: String,
+        reply: tokio::sync::oneshot::Sender<bool>,
+    },
     BroadcastDeletion {
         item_id: String,
     },

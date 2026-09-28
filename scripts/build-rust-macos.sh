@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Build Rust core for macOS, generate Swift bindings, copy to project.
 echo "==> Building Rust core"
-cargo build --release
+cargo build --release -p manis-pocket-core -p manis-pocket-sync
 ls -lh target/release/libmanis_pocket_core.a target/release/libmanis_pocket_sync.a
 
 echo "==> Generating UniFFI Swift bindings"

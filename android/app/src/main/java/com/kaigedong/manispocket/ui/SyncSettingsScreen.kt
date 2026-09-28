@@ -60,10 +60,10 @@ fun SyncSettingsScreen(
                 showPairingDialog = false
                 viewModel.dismissPairingRequest()
             },
-            title = { Text("Pairing Request") },
+            title = { Text("Pair devices") },
             text = {
                 Column {
-                    Text("Device \"${pairingRequest!!.displayName}\" wants to sync.")
+                    Text("Pairing with \"${pairingRequest!!.displayName}\". Compare this code on both devices.")
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         "PIN: ${pairingRequest!!.pin}",
@@ -75,7 +75,7 @@ fun SyncSettingsScreen(
                 TextButton(onClick = {
                     viewModel.acceptPairing(pairingRequest!!.peerId, pairingRequest!!.pin)
                     showPairingDialog = false
-                    connectionStatus = "Paired!"
+                    connectionStatus = "Waiting for the other device to confirm..."
                 }) { Text("Confirm") }
             },
             dismissButton = {

@@ -4,6 +4,9 @@
 #include <ostream>
 #include <new>
 
+/// Keep the complete CBOR request comfortably below libp2p's default 1 MiB limit.
+constexpr static const uintptr_t MAX_CLIPBOARD_TEXT_BYTES = (512 * 1024);
+
 /// Fixed listen port for reliable reconnection.
 constexpr static const uint16_t LISTEN_PORT = 31774;
 

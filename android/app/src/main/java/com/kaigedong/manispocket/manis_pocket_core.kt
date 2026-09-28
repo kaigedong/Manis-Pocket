@@ -760,11 +760,17 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_manis_pocket_core_checksum_method_historymanager_sync_broadcast_update(
     ): Short
+    external fun uniffi_manis_pocket_core_checksum_method_historymanager_sync_confirm_current_clipboard(
+    ): Short
+    external fun uniffi_manis_pocket_core_checksum_method_historymanager_sync_observe_local_clipboard(
+    ): Short
     external fun uniffi_manis_pocket_core_checksum_method_historymanager_sync_refresh_discovery(
     ): Short
     external fun uniffi_manis_pocket_core_checksum_method_historymanager_sync_reject_pairing(
     ): Short
     external fun uniffi_manis_pocket_core_checksum_method_historymanager_sync_request_pairing(
+    ): Short
+    external fun uniffi_manis_pocket_core_checksum_method_historymanager_sync_should_apply_current_clipboard(
     ): Short
     external fun uniffi_manis_pocket_core_checksum_method_historymanager_sync_start_discovery(
     ): Short
@@ -867,12 +873,18 @@ external fun uniffi_manis_pocket_core_fn_method_historymanager_sync_broadcast_it
 ): Unit
 external fun uniffi_manis_pocket_core_fn_method_historymanager_sync_broadcast_update(`ptr`: Long,`item`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Unit
+external fun uniffi_manis_pocket_core_fn_method_historymanager_sync_confirm_current_clipboard(`ptr`: Long,`eventId`: RustBuffer.ByValue,`success`: Byte,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_manis_pocket_core_fn_method_historymanager_sync_observe_local_clipboard(`ptr`: Long,`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Unit
 external fun uniffi_manis_pocket_core_fn_method_historymanager_sync_refresh_discovery(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): Unit
 external fun uniffi_manis_pocket_core_fn_method_historymanager_sync_reject_pairing(`ptr`: Long,`peerId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Unit
 external fun uniffi_manis_pocket_core_fn_method_historymanager_sync_request_pairing(`ptr`: Long,`peerId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Unit
+external fun uniffi_manis_pocket_core_fn_method_historymanager_sync_should_apply_current_clipboard(`ptr`: Long,`eventId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Byte
 external fun uniffi_manis_pocket_core_fn_method_historymanager_sync_start_discovery(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): Unit
 external fun uniffi_manis_pocket_core_fn_method_historymanager_sync_stop_discovery(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
@@ -1093,6 +1105,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_manis_pocket_core_checksum_method_historymanager_sync_broadcast_update() != 57751.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_manis_pocket_core_checksum_method_historymanager_sync_confirm_current_clipboard() != 63805.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_manis_pocket_core_checksum_method_historymanager_sync_observe_local_clipboard() != 1342.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_manis_pocket_core_checksum_method_historymanager_sync_refresh_discovery() != 49637.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1100,6 +1118,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_manis_pocket_core_checksum_method_historymanager_sync_request_pairing() != 41726.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_manis_pocket_core_checksum_method_historymanager_sync_should_apply_current_clipboard() != 4665.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_manis_pocket_core_checksum_method_historymanager_sync_start_discovery() != 6184.toShort()) {
@@ -2380,6 +2401,16 @@ public interface HistoryManagerInterface {
     fun `syncBroadcastUpdate`(`item`: ClipboardItem)
 
     /**
+     * Complete a remote clipboard update only after the platform clipboard write.
+     */
+    fun `syncConfirmCurrentClipboard`(`eventId`: kotlin.String, `success`: kotlin.Boolean)
+
+    /**
+     * Report the actual system clipboard at startup or after an ignored copy.
+     */
+    fun `syncObserveLocalClipboard`(`text`: kotlin.String?)
+
+    /**
      * Restart discovery to find new peers.
      */
     fun `syncRefreshDiscovery`()
@@ -2387,6 +2418,8 @@ public interface HistoryManagerInterface {
     fun `syncRejectPairing`(`peerId`: kotlin.String)
 
     fun `syncRequestPairing`(`peerId`: kotlin.String)
+
+    fun `syncShouldApplyCurrentClipboard`(`eventId`: kotlin.String): kotlin.Boolean
 
     fun `syncStartDiscovery`()
 
@@ -2822,6 +2855,36 @@ open class HistoryManager: Disposable, AutoCloseable, HistoryManagerInterface
 
 
     /**
+     * Complete a remote clipboard update only after the platform clipboard write.
+     */override fun `syncConfirmCurrentClipboard`(`eventId`: kotlin.String, `success`: kotlin.Boolean)
+        =
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_manis_pocket_core_fn_method_historymanager_sync_confirm_current_clipboard(
+        it,
+        FfiConverterString.lower(`eventId`),FfiConverterBoolean.lower(`success`),_status)
+}
+    }
+
+
+
+
+    /**
+     * Report the actual system clipboard at startup or after an ignored copy.
+     */override fun `syncObserveLocalClipboard`(`text`: kotlin.String?)
+        =
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_manis_pocket_core_fn_method_historymanager_sync_observe_local_clipboard(
+        it,
+        FfiConverterOptionalString.lower(`text`),_status)
+}
+    }
+
+
+
+
+    /**
      * Restart discovery to find new peers.
      */override fun `syncRefreshDiscovery`()
         =
@@ -2857,6 +2920,19 @@ open class HistoryManager: Disposable, AutoCloseable, HistoryManagerInterface
 }
     }
 
+
+
+    override fun `syncShouldApplyCurrentClipboard`(`eventId`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_manis_pocket_core_fn_method_historymanager_sync_should_apply_current_clipboard(
+        it,
+        FfiConverterString.lower(`eventId`),_status)
+}
+    }
+    )
+    }
 
 
     override fun `syncStartDiscovery`()

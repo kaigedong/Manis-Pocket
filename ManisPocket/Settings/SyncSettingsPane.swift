@@ -217,7 +217,7 @@ struct SyncSettingsPane: View {
     private var pairingDialogContent: some View {
         VStack(spacing: 16) {
             Text("Pairing Request").font(.headline)
-            Text("Device \"\(pairingDisplayName)\" wants to sync clipboards.")
+            Text("Pairing with \"\(pairingDisplayName)\".")
             Text("Confirm this PIN on both devices:")
             HStack(spacing: 8) {
                 ForEach(Array(pairingPin.enumerated()), id: \.offset) { _, char in

@@ -77,12 +77,13 @@ class Clipboard {
     func copy(_ string: String) {
         pasteboard.clearContents()
         pasteboard.setString(string, forType: .string)
+        SyncBridge.shared.observeLocalClipboard(string)
         sync()
         checkForChangesInPasteboard()
     }
 
     @MainActor
-    func copy(_ item: ClipboardItem?, removeFormatting: Bool = false) {
+    func copy(_ item: ClipboardItem?, removeFormatting: Bool = false, fromSync: Bool = false) {
         guard let item else { return }
 
         pasteboard.clearContents()
@@ -106,10 +107,15 @@ class Clipboard {
             pasteItem.setData(value, forType: NSPasteboard.PasteboardType(content.contentType))
             return pasteItem
         }
-        pasteboard.writeObjects(fileURLItems)
+        if !fileURLItems.isEmpty {
+            pasteboard.writeObjects(fileURLItems)
+        }
 
         pasteboard.setString("", forType: .fromManisPocket)
         pasteboard.setString(item.application ?? "", forType: .source)
+        if !fromSync {
+            SyncBridge.shared.observeLocalClipboard(getText(from: item))
+        }
         sync()
 
         Task {
@@ -148,6 +154,12 @@ class Clipboard {
         pasteboard.clearContents()
     }
 
+    @MainActor
+    func clearFromSync() {
+        pasteboard.clearContents()
+        changeCount = pasteboard.changeCount
+    }
+
     @objc
     @MainActor
     func checkForChangesInPasteboard() {
@@ -159,6 +171,12 @@ class Clipboard {
         changeCount = pasteboard.changeCount
         let changeCountDelta = changeCount - previousChangeCount
 
+        // A remote update or a history selection was written by this app.
+        // Recording it again would rebroadcast it to peers.
+        if pasteboard.pasteboardItems?.contains(where: { $0.types.contains(.fromManisPocket) }) == true {
+            return
+        }
+
         if pasteboard.pasteboardItems?.contains(where: { $0.types.contains(.fromManisPocket) }) != true {
             AppState.shared.history.interruptPasteStack()
         }
@@ -169,14 +187,17 @@ class Clipboard {
                 Defaults[.ignoreOnlyNextEvent] = false
             }
 
+            SyncBridge.shared.observeLocalClipboard(nil)
             return
         }
 
         if shouldIgnore(Set(pasteboard.types ?? [])) {
+            SyncBridge.shared.observeLocalClipboard(nil)
             return
         }
 
         if let sourceAppBundle = sourceApp?.bundleIdentifier, shouldIgnore(sourceAppBundle) {
+            SyncBridge.shared.observeLocalClipboard(nil)
             return
         }
 
@@ -208,6 +229,7 @@ class Clipboard {
         }
 
         guard !contents.isEmpty else {
+            SyncBridge.shared.observeLocalClipboard(nil)
             return
         }
 

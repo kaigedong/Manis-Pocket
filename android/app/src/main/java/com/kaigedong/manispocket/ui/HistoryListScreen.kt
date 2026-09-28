@@ -35,10 +35,13 @@ fun HistoryListScreen(viewModel: HistoryViewModel = viewModel()) {
         LogManager.i("ManisPocket", "History initialized")
 
         val clipboardService = ClipboardService(context)
-        clipboardService.startPolling { item ->
-            LogManager.d("Clipboard", "New clip: ${item.title.take(80)}")
-            viewModel.addItem(item)
-        }
+        clipboardService.startPolling(
+            onCurrentClip = { text -> viewModel.observeCurrentClipboard(text) },
+            onNewClip = { item ->
+                LogManager.d("Clipboard", "New clip: ${item.title.take(80)}")
+                viewModel.addItem(item)
+            },
+        )
     }
 
     Scaffold(

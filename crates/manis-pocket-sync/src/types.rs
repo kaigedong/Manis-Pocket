@@ -1,3 +1,4 @@
+use crate::register::{ClipboardUpdate, Revision};
 use serde::{Deserialize, Serialize};
 
 /// Information about a discovered or paired peer.
@@ -32,7 +33,7 @@ pub struct SyncItemContent {
     pub value: Option<String>,
 }
 
-/// Messages sent over gossipsub.
+/// Legacy history messages retained for the existing C ABI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SyncMessage {
     ItemAdded {
@@ -51,20 +52,52 @@ pub enum SyncMessage {
     },
 }
 
-/// Pairing protocol messages sent over request-response.
+/// Pairing messages on the signed discovery topic. Both users must confirm the
+/// same short code before either peer is authorized to receive clipboard data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PairingMessage {
     Request {
         session_id: String,
+        target_peer_id: String,
         device_name: String,
-        device_id: String,
-        public_key: Vec<u8>,
     },
-    Accept {
+    Confirm {
         session_id: String,
+        target_peer_id: String,
     },
     Reject {
         session_id: String,
+        target_peer_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ClipboardRequest {
+    /// Exchange revisions when a connection starts or a delivery needs repair.
+    Head {
+        known: Option<Revision>,
+    },
+    Apply {
+        update: ClipboardUpdate,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApplyStatus {
+    Applied,
+    Stale,
+    Retry,
+    Invalid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ClipboardResponse {
+    Head {
+        head: Option<Revision>,
+        update: Option<ClipboardUpdate>,
+    },
+    Apply {
+        status: ApplyStatus,
     },
 }
 
@@ -93,7 +126,13 @@ pub enum SyncEvent {
     #[serde(rename = "pairing_complete")]
     PairingComplete { peer_id: String, success: bool },
     #[serde(rename = "item_received")]
-    ItemReceived { item_json: String },
+    ItemReceived { item_json: String, peer_id: String },
+    #[serde(rename = "current_clipboard_received")]
+    CurrentClipboardReceived {
+        event_id: String,
+        peer_id: String,
+        text: Option<String>,
+    },
     #[serde(rename = "item_deleted")]
     ItemDeleted { item_id: String },
     #[serde(rename = "item_updated")]
@@ -126,11 +165,11 @@ pub enum SyncEvent {
     },
 }
 
-/// Gossipsub topic name.
-pub const TOPIC_NAME: &str = "manis-pocket-sync-v1";
+/// Direct, paired-only clipboard state protocol.
+pub const CLIPBOARD_PROTOCOL: &str = "/manis-pocket-sync/clipboard/3";
 
 /// Protocol name for pairing request-response.
-pub const PAIRING_PROTOCOL: &str = "/manis-pocket-sync/pairing/1";
+pub const PAIRING_PROTOCOL: &str = "/manis-pocket-sync/pairing/2";
 
 /// Protocol name for bulk sync request-response.
 pub const BULK_SYNC_PROTOCOL: &str = "/manis-pocket-sync/bulk/1";

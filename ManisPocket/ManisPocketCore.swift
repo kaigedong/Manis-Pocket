@@ -1310,6 +1310,16 @@ public protocol HistoryManagerProtocol: AnyObject, Sendable {
     func syncBroadcastUpdate(item: ClipboardItem)
 
     /**
+     * Complete a remote clipboard update only after the platform clipboard write.
+     */
+    func syncConfirmCurrentClipboard(eventId: String, success: Bool)
+
+    /**
+     * Report the actual system clipboard at startup or after an ignored copy.
+     */
+    func syncObserveLocalClipboard(text: String?)
+
+    /**
      * Restart discovery to find new peers.
      */
     func syncRefreshDiscovery()
@@ -1317,6 +1327,8 @@ public protocol HistoryManagerProtocol: AnyObject, Sendable {
     func syncRejectPairing(peerId: String)
 
     func syncRequestPairing(peerId: String)
+
+    func syncShouldApplyCurrentClipboard(eventId: String)  -> Bool
 
     func syncStartDiscovery()
 
@@ -1619,6 +1631,29 @@ open func syncBroadcastUpdate(item: ClipboardItem)  {try! rustCall() {
 }
 
     /**
+     * Complete a remote clipboard update only after the platform clipboard write.
+     */
+open func syncConfirmCurrentClipboard(eventId: String, success: Bool)  {try! rustCall() {
+    uniffi_manis_pocket_core_fn_method_historymanager_sync_confirm_current_clipboard(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(eventId),
+        FfiConverterBool.lower(success),$0
+    )
+}
+}
+
+    /**
+     * Report the actual system clipboard at startup or after an ignored copy.
+     */
+open func syncObserveLocalClipboard(text: String?)  {try! rustCall() {
+    uniffi_manis_pocket_core_fn_method_historymanager_sync_observe_local_clipboard(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionString.lower(text),$0
+    )
+}
+}
+
+    /**
      * Restart discovery to find new peers.
      */
 open func syncRefreshDiscovery()  {try! rustCall() {
@@ -1642,6 +1677,15 @@ open func syncRequestPairing(peerId: String)  {try! rustCall() {
         FfiConverterString.lower(peerId),$0
     )
 }
+}
+
+open func syncShouldApplyCurrentClipboard(eventId: String) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_manis_pocket_core_fn_method_historymanager_sync_should_apply_current_clipboard(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(eventId),$0
+    )
+})
 }
 
 open func syncStartDiscovery()  {try! rustCall() {
@@ -2583,6 +2627,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_manis_pocket_core_checksum_method_historymanager_sync_broadcast_update() != 57751) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_manis_pocket_core_checksum_method_historymanager_sync_confirm_current_clipboard() != 63805) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_manis_pocket_core_checksum_method_historymanager_sync_observe_local_clipboard() != 1342) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_manis_pocket_core_checksum_method_historymanager_sync_refresh_discovery() != 49637) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -2590,6 +2640,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_manis_pocket_core_checksum_method_historymanager_sync_request_pairing() != 41726) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_manis_pocket_core_checksum_method_historymanager_sync_should_apply_current_clipboard() != 4665) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_manis_pocket_core_checksum_method_historymanager_sync_start_discovery() != 6184) {

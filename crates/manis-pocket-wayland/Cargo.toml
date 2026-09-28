@@ -1,0 +1,15 @@
+[package]
+name = "manis-pocket-wayland"
+version = "0.1.0"
+edition.workspace = true
+description = "Wayland clipboard client for Manis Pocket"
+
+[[bin]]
+name = "manis-pocket-wayland"
+path = "src/main.rs"
+
+[dependencies]
+manis-pocket-sync = { path = "../manis-pocket-sync" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "io-std", "signal"] }
+libp2p = { version = "0.56", features = ["ed25519"] }
+serde_json = "1"

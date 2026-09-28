@@ -17,26 +17,26 @@ class ClipboardService(
 
     fun startPolling(
         intervalMs: Long = 500L,
+        onCurrentClip: (String?) -> Unit = {},
         onNewClip: (ClipboardItem) -> Unit,
     ) {
         pollingRunnable =
             object : Runnable {
                 override fun run() {
                     val clip = clipboardManager.primaryClip
-                    if (clip != null && clip.itemCount > 0) {
-                        // Compare actual content, not ClipData identity. ClipData does
-                        // not override hashCode(), so the old `clip.hashCode()` check
-                        // used the identity hash, which differs on every getPrimaryClip()
-                        // call — making the poll fire every interval and re-broadcast the
-                        // same clip in a ~0.5s loop.
-                        val sig = clipSignature(clip)
-                        if (sig.isNotEmpty() && sig != lastClipSig) {
-                            lastClipSig = sig
-                            val item = clipToItem(clip)
-                            if (item != null) {
-                                onNewClip(item)
+                    // Compare content rather than ClipData identity, and observe
+                    // empty or non-text state so old remote text can be retired.
+                    val sig = if (clip != null && clip.itemCount > 0) clipSignature(clip) else "<empty>"
+                    if (sig != lastClipSig) {
+                        lastClipSig = sig
+                        val text =
+                            clip?.let { current ->
+                                (0 until current.itemCount).firstNotNullOfOrNull { index ->
+                                    current.getItemAt(index).text?.toString()
+                                }
                             }
-                        }
+                        onCurrentClip(text)
+                        clip?.let { clipToItem(it) }?.let(onNewClip)
                     }
                     handler.postDelayed(this, intervalMs)
                 }
@@ -49,7 +49,12 @@ class ClipboardService(
         sb.append(clip.itemCount).append('|')
         for (i in 0 until clip.itemCount) {
             val item = clip.getItemAt(i)
-            val repr = item.text?.toString() ?: item.uri?.toString() ?: ""
+            val repr =
+                when {
+                    item.text != null -> "text:${item.text}"
+                    item.uri != null -> "uri:${item.uri}"
+                    else -> "other"
+                }
             sb.append(repr).append('')
         }
         return sb.toString()

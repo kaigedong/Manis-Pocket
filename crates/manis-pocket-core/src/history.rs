@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::model::{ClipboardContent, ClipboardItem, CoreError, SearchMode, SearchResult, SortBy};
@@ -21,6 +22,7 @@ use crate::sync::SyncEngine;
 pub struct HistoryManager {
     storage: Mutex<Storage>,
     sync_engine: Mutex<Option<SyncEngine>>,
+    clipboard_state_path: Option<PathBuf>,
 }
 
 #[uniffi::export]
@@ -28,9 +30,15 @@ impl HistoryManager {
     #[uniffi::constructor]
     pub fn new(db_path: String) -> Result<Self, CoreError> {
         let storage = Storage::open(&db_path)?;
+        let clipboard_state_path = if db_path.is_empty() || db_path == ":memory:" {
+            None
+        } else {
+            Some(PathBuf::from(&db_path).with_extension("clipboard-state.json"))
+        };
         Ok(HistoryManager {
             storage: Mutex::new(storage),
             sync_engine: Mutex::new(None),
+            clipboard_state_path,
         })
     }
 
@@ -243,6 +251,7 @@ impl HistoryManager {
             observer,
             stored_keypair,
             initial_paired_peer_ids,
+            self.clipboard_state_path.clone(),
         )?;
         self.storage
             .lock()
@@ -341,6 +350,36 @@ impl HistoryManager {
                 e.broadcast_item(&item);
             }
         }
+    }
+
+    /// Report the actual system clipboard at startup or after an ignored copy.
+    pub fn sync_observe_local_clipboard(&self, text: Option<String>) {
+        if let Ok(guard) = self.sync_engine.lock() {
+            if let Some(ref engine) = *guard {
+                engine.observe_local_clipboard(text);
+            }
+        }
+    }
+
+    /// Complete a remote clipboard update only after the platform clipboard write.
+    pub fn sync_confirm_current_clipboard(&self, event_id: String, success: bool) {
+        if let Ok(guard) = self.sync_engine.lock() {
+            if let Some(ref engine) = *guard {
+                engine.confirm_current_clipboard(&event_id, success);
+            }
+        }
+    }
+
+    pub fn sync_should_apply_current_clipboard(&self, event_id: String) -> bool {
+        self.sync_engine
+            .lock()
+            .ok()
+            .and_then(|guard| {
+                guard
+                    .as_ref()
+                    .map(|engine| engine.should_apply_current_clipboard(&event_id))
+            })
+            .unwrap_or(false)
     }
 
     /// Broadcast a deletion to synced peers.

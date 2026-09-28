@@ -2,6 +2,7 @@
 members = [
     "crates/manis-pocket-core",
     "crates/manis-pocket-sync",
+    "crates/manis-pocket-wayland",
 ]
 resolver = "2"
 

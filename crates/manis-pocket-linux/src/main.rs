@@ -379,6 +379,15 @@ fn handle_event(ui: &Rc<RefCell<Ui>>, event: serde_json::Value) {
 fn render_history(ui: &Ui) {
     clear_list(&ui.history_list);
     let query = ui.search.text().to_lowercase();
+    let placeholder = if query.is_empty() {
+        "Copy text to see it here. Select Copy to use it again."
+    } else {
+        "No history items match this search."
+    };
+    let empty = gtk::Label::new(Some(placeholder));
+    empty.set_wrap(true);
+    empty.set_margin_top(32);
+    ui.history_list.set_placeholder(Some(&empty));
     for text in ui
         .history
         .iter()
@@ -459,6 +468,7 @@ fn render_peers(ui: &Ui) {
 
 fn show_pairing(ui: &Rc<RefCell<Ui>>, id: &str, name: &str, pin: &str) {
     let state = ui.borrow();
+    state.window.present();
     let dialog = gtk::Dialog::builder()
         .transient_for(&state.window)
         .modal(true)

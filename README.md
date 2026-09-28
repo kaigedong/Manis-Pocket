@@ -24,6 +24,8 @@ cargo build --release -p manis-pocket-wayland
 ./target/release/manis-pocket-wayland --name "Linux Laptop"
 ```
 
+Arch Linux 可用 [本地 PKGBUILD](packaging/archlinux/README.md) 构建安装；计划发布的 `manis-pocket-wayland-git` [AUR 源码包](packaging/aur/README.md) 安装同一个 Wayland 命令行客户端。AUR 尚未发布。
+
 Mac 端在设置中启用 **Clipboard Sync**。两台设备处于同一局域网时会通过 mDNS 发现；如发现失败，可在 Linux 端使用 `--connect MAC_IP:31774`，或在 Mac 的同步设置中手动连接 `LINUX_IP:31774`。确保 TCP 31774 可达。
 
 在 Mac 的 **Discovered Devices** 点击 **Pair**，或在 Linux 客户端输入 `peers` 查看设备 ID，再输入 `pair PEER_ID`。两端都会显示六位码；核对一致后在 Mac 点击 **Confirm**，在 Linux 输入 `confirm PEER_ID 六位码`。双方确认完成后，在任一设备复制纯文本，另一端的系统剪贴板会更新，可直接粘贴。Linux 客户端还支持 `reject PEER_ID`、`unpair PEER_ID` 和 `quit`。

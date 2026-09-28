@@ -1,0 +1,58 @@
+name: Arch Linux package
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Wayland CLI on Arch x86_64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install build dependencies
+        run: pacman -Syu --noconfirm --needed git rust wl-clipboard namcap
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare unprivileged builder
+        run: |
+          useradd --create-home --shell /bin/bash builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Build package as an unprivileged user
+        run: |
+          runuser -u builder -- bash -c '
+            cd "$1"
+            cd packaging/archlinux
+            makepkg --noconfirm --cleanbuild
+          ' _ "$GITHUB_WORKSPACE"
+
+      - name: Inspect package
+        run: |
+          package_path="$(find packaging/archlinux -maxdepth 1 -name 'manis-pocket-wayland-[0-9]*.pkg.tar.zst' -print -quit)"
+          test -n "$package_path"
+          pacman -Qip "$package_path"
+          pacman -Qlp "$package_path"
+          namcap "$package_path"
+          mkdir -p dist
+          cp "$package_path" dist/
+          cd dist
+          sha256sum "$(basename "$package_path")" > "$(basename "$package_path").sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manis-pocket-wayland-arch-x86_64
+          path: |
+            dist/manis-pocket-wayland-*.pkg.tar.zst
+            dist/manis-pocket-wayland-*.pkg.tar.zst.sha256
+          if-no-files-found: error

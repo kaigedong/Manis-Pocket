@@ -24,7 +24,7 @@ cargo build --release -p manis-pocket-wayland
 ./target/release/manis-pocket-wayland --name "Linux Laptop"
 ```
 
-Arch Linux 可用 [本地 PKGBUILD](packaging/archlinux/README.md) 构建安装；计划发布的 `manis-pocket-wayland-git` [AUR 源码包](packaging/aur/README.md) 安装同一个 Wayland 命令行客户端。AUR 尚未发布。
+Arch Linux 可用 [本地 PKGBUILD](packaging/archlinux/README.md) 构建安装；`manis-pocket-bin` [AUR 二进制包](packaging/aur/README.md) 将安装同一个 Wayland 命令行客户端。
 
 Mac 端在设置中启用 **Clipboard Sync**。两台设备处于同一局域网时会通过 mDNS 发现；如发现失败，可在 Linux 端使用 `--connect MAC_IP:31774`，或在 Mac 的同步设置中手动连接 `LINUX_IP:31774`。确保 TCP 31774 可达。
 

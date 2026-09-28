@@ -1,0 +1,148 @@
+name: Publish Arch release and AUR
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch_run_id:
+        description: Successful Arch Linux package CI run ID for this master commit
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: publish-manis-pocket-aur
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish immutable Arch release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      pkgver: ${{ steps.release.outputs.pkgver }}
+      sha256: ${{ steps.release.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Verify Arch CI run and download package
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCH_RUN_ID: ${{ inputs.arch_run_id }}
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" != 'refs/heads/master' || ! "$ARCH_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo 'dispatch on master with a numeric Arch CI run ID' >&2
+            exit 1
+          fi
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ARCH_RUN_ID")"
+          if [[ "$(jq -r .name <<< "$run_json")" != 'Arch Linux package' ||
+                "$(jq -r .event <<< "$run_json")" != 'push' ||
+                "$(jq -r .head_branch <<< "$run_json")" != 'master' ||
+                "$(jq -r .head_sha <<< "$run_json")" != "$GITHUB_SHA" ||
+                "$(jq -r .conclusion <<< "$run_json")" != 'success' ]]; then
+            echo 'Arch CI run does not match this successful master commit' >&2
+            exit 1
+          fi
+
+          pkgver="$(bash packaging/package-version.sh)"
+          asset_name="manis-pocket-wayland-${pkgver}-1-x86_64.pkg.tar.zst"
+          gh run download "$ARCH_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name manis-pocket-wayland-arch-x86_64 \
+            --dir dist
+          test -f "dist/$asset_name"
+          (cd dist && sha256sum --check "$asset_name.sha256")
+          digest="$(sha256sum "dist/$asset_name" | cut -d ' ' -f1)"
+
+          release_tag="wayland-${pkgver}"
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            remote_digest="$(
+              gh api "repos/$GITHUB_REPOSITORY/releases/tags/$release_tag" \
+                --jq ".assets[] | select(.name == \"$asset_name\") | .digest"
+            )"
+            if [[ "$remote_digest" != "sha256:$digest" ]]; then
+              echo 'existing release asset differs from the verified Arch CI package' >&2
+              exit 1
+            fi
+          else
+            gh release create "$release_tag" \
+              "dist/$asset_name" "dist/$asset_name.sha256" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Manis Pocket Wayland $pkgver" \
+              --notes "Arch Linux Wayland clipboard client built and tested from $GITHUB_SHA." \
+              --prerelease --latest=false
+          fi
+          echo "pkgver=$pkgver" >> "$GITHUB_OUTPUT"
+          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+
+  aur:
+    name: Publish manis-pocket-bin
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Configure AUR SSH identity
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          if [[ -z "$AUR_SSH_PRIVATE_KEY" ]]; then
+            echo 'AUR_SSH_PRIVATE_KEY is not configured in Manis-Pocket' >&2
+            exit 1
+          fi
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$HOME/.ssh/aur"
+          chmod 0600 "$HOME/.ssh/aur"
+          printf '%s\n' \
+            'aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN' \
+            > "$HOME/.ssh/known_hosts"
+          chmod 0644 "$HOME/.ssh/known_hosts"
+
+      - name: Render AUR metadata
+        env:
+          GIT_SSH_COMMAND: ssh -i ~/.ssh/aur -o IdentitiesOnly=yes
+          PKGVER: ${{ needs.release.outputs.pkgver }}
+          PACKAGE_SHA256: ${{ needs.release.outputs.sha256 }}
+        shell: bash
+        run: |
+          aur_dir="$RUNNER_TEMP/manis-pocket-bin"
+          git clone ssh://aur@aur.archlinux.org/manis-pocket-bin.git "$aur_dir"
+          bash packaging/aur/render-pkgbuild.sh "$PKGVER" "$PACKAGE_SHA256" "$aur_dir"
+          docker run --rm \
+            --platform linux/amd64 \
+            -v "$aur_dir:/aur:ro" \
+            archlinux:base-devel@sha256:a26046b7363dad8e2614858f4313949ae9b05c9c5f31de343a54864b9e20806f \
+            bash -lc '
+              useradd --create-home builder
+              cp -a /aur /home/builder/package
+              chown -R builder:builder /home/builder/package
+              runuser -u builder -- bash -lc "cd ~/package && makepkg --printsrcinfo"
+            ' > "$aur_dir/.SRCINFO"
+          grep -Fx "$(printf '\tpkgver = %s' "$PKGVER")" "$aur_dir/.SRCINFO"
+
+      - name: Push AUR package
+        env:
+          GIT_SSH_COMMAND: ssh -i ~/.ssh/aur -o IdentitiesOnly=yes
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/manis-pocket-bin"
+          git config user.name 'Manis Pocket release automation'
+          git config user.email 'bobosingle@users.noreply.github.com'
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo 'AUR package is already current'
+            exit 0
+          fi
+          git commit -m "Update to $(sed -n 's/^pkgver=//p' PKGBUILD)"
+          git push origin HEAD:master

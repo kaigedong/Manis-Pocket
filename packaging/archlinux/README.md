@@ -14,6 +14,6 @@ namcap manis-pocket-wayland-[0-9]*.pkg.tar.zst
 sudo pacman -U manis-pocket-wayland-[0-9]*.pkg.tar.zst
 ```
 
-For the AUR source package, see [../aur](../aur/README.md). The AUR package
-fetches the upstream Git repository and has a `-git` suffix; this checkout
+For the AUR binary package, see [../aur](../aur/README.md). It repackages the
+immutable Arch package published by the release workflow. This checkout
 package is intended for CI artifacts and local validation.

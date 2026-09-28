@@ -1,49 +1,37 @@
-# Arch Linux / AUR
+# Manis Pocket AUR binary package
 
-This source package installs the **Manis Pocket Wayland CLI** as
-`/usr/bin/manis-pocket-wayland`. It does not include the macOS GUI. The package
-uses the renamed `Manis-Pocket` repository and binary; it is separate from the
-unrelated `Manis` proxy app and its `manis-bin` AUR package.
+`manis-pocket-bin` installs the Manis Pocket Wayland clipboard client at
+`/usr/bin/manis-pocket-wayland`. It repackages an immutable Arch Linux package
+from a GitHub release. The macOS GUI is not included.
 
-Unlike Manis's `manis-bin` package, there is no Linux release artifact to
-repackage yet. `manis-pocket-wayland-git` builds the Rust binary from the
-upstream `master` branch. The package depends on `wl-clipboard` for `wl-copy`
-and `wl-paste`, and installs no desktop entry or system service because pairing
-requires interactive PIN confirmation.
+The runtime dependency on `wl-clipboard` supplies `wl-copy` and `wl-paste`.
+Pairing requires interactive PIN confirmation, so the package does not install
+a desktop entry or a system service.
 
-## Local Arch build
+## Release flow
 
-Before pushing the source revision, validate the current checkout with
-[the checkout PKGBUILD](../archlinux/README.md). After pushing, test this AUR
-PKGBUILD on an Arch Linux x86_64 Wayland machine with `base-devel` installed:
+The [Arch CI](../../.github/workflows/arch-package.yml) builds and tests the
+checkout on every push to `master`, then uploads a package and its SHA-256 as
+workflow artifacts. Once the run succeeds, dispatch
+[Publish Arch release and AUR](../../.github/workflows/publish-aur.yml) with
+that Arch CI run ID. The publisher checks the run's commit, creates an immutable
+`wayland-${pkgver}` GitHub release, renders this package from `PKGBUILD.in`,
+generates `.SRCINFO` on Arch, and pushes both files to AUR.
 
-```sh
-cd packaging/aur
-makepkg --syncdeps --cleanbuild
-namcap manis-pocket-wayland-git-*.pkg.tar.zst
-```
+The publisher needs `AUR_SSH_PRIVATE_KEY` in the **Manis-Pocket** GitHub
+repository. Its public key must be registered with the `bobosingle` AUR account.
 
-Install the resulting package with `sudo pacman -U` and run
-`manis-pocket-wayland --name "Linux Laptop"` in the Wayland session. See the
-project [README](../../README.md) for pairing and clipboard instructions.
+## Local validation
 
-## AUR publication
-
-The source revision containing the Wayland client must be pushed to
-`kaigedong/Manis-Pocket` before publishing this PKGBUILD. Then copy `PKGBUILD`
-to an AUR checkout of `ssh://aur@aur.archlinux.org/manis-pocket-wayland-git.git`.
-Build in that checkout so `pkgver()` updates the version from the fetched
-commit, then generate `.SRCINFO` from the updated PKGBUILD:
+After a GitHub release exists, render and build the AUR package on Arch Linux:
 
 ```sh
+bash packaging/aur/render-pkgbuild.sh PKGVER RELEASE_SHA256 /path/to/aur-checkout
+cd /path/to/aur-checkout
 makepkg --syncdeps --cleanbuild
 makepkg --printsrcinfo > .SRCINFO
-namcap manis-pocket-wayland-git-*.pkg.tar.zst
-git add PKGBUILD .SRCINFO
-git commit -m 'Publish Manis Pocket Wayland client'
-git push origin HEAD:master
+namcap manis-pocket-bin-*.pkg.tar.zst
 ```
 
-Only push after a clean Arch build and a Wayland session clipboard smoke test.
-The AUR checkout should contain `PKGBUILD` and `.SRCINFO`; it must not contain
-the generated package archive.
+Run `manis-pocket-wayland --name "Linux Laptop"` in a Wayland session. See the
+project [README](../../README.md) for pairing and clipboard instructions.

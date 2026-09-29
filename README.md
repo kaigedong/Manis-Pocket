@@ -6,7 +6,7 @@ Manis Pocket 是轻量的剪贴板历史工具，支持快速搜索、固定常�
 
 ## 安装
 
-从本仓库的 [Releases](../../releases) 下载。macOS 需要 14 或更新版本；Android 版本仍在开发中。
+macOS（Apple Silicon，macOS 14 或更新版本）下载[当前测试版 ManisPocket.app.zip](https://github.com/kaigedong/Manis-Pocket/releases/download/latest-beta/ManisPocket.app.zip)，解压后将 `ManisPocket.app` 移到“应用程序”。当前测试版采用临时签名，尚未经过 Apple 公证；如果 macOS 阻止首次打开，先尝试打开一次，再按 [Apple 的说明](https://support.apple.com/zh-cn/102445)在“系统设置 → 隐私与安全性”中选择“仍要打开”。[latest-beta 发布页](https://github.com/kaigedong/Manis-Pocket/releases/tag/latest-beta)会持续提供最新的 macOS 安装包。Android 版本仍在开发中。
 
 ## 使用
 

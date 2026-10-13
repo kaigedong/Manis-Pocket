@@ -2,6 +2,7 @@ import AppKit
 import Defaults
 import Foundation
 import Settings
+import enum Settings.Settings
 import SwiftUI
 
 @Observable
@@ -110,7 +111,7 @@ class AppState: Sendable {
     }
 
     @MainActor
-    func openPreferences() { // swiftlint:disable:this function_body_length
+    func openPreferences(pane: Settings.PaneIdentifier? = nil) { // swiftlint:disable:this function_body_length
         if settingsWindowController == nil {
             settingsWindowController = SettingsWindowController(
                 panes: [
@@ -129,7 +130,7 @@ class AppState: Sendable {
                         StorageSettingsPane()
                     },
                     Settings.Pane(
-                        identifier: Settings.PaneIdentifier(rawValue: "sync"),
+                        identifier: Settings.PaneIdentifier.sync,
                         title: NSLocalizedString("Title", tableName: "SyncSettings", comment: ""),
                         toolbarIcon: NSImage(
                             systemSymbolName: "arrow.triangle.2.circlepath",
@@ -170,24 +171,12 @@ class AppState: Sendable {
                 ]
             )
         }
-        settingsWindowController?.show()
-        settingsWindowController?.window?.orderFrontRegardless()
+        settingsWindowController?.show(pane: pane)
     }
 
     @MainActor
     func openPreferencesToSync() {
-        openPreferences()
-        // Select the sync tab
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            if let toolbar = self.settingsWindowController?.window?.toolbar {
-                for item in toolbar.items {
-                    if item.itemIdentifier.rawValue == "sync" {
-                        toolbar.selectedItemIdentifier = item.itemIdentifier
-                        break
-                    }
-                }
-            }
-        }
+        openPreferences(pane: .sync)
     }
 
     func quit() {

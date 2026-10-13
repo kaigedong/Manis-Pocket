@@ -102,14 +102,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             SyncBridge.shared.start()
         }
 
-        // When a peer connects, open settings to sync tab
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("showSyncSettings"),
-            object: nil, queue: .main
-        ) { _ in
-            AppState.shared.openPreferencesToSync()
-        }
-
         panel = FloatingPanel(
             contentRect: NSRect(origin: .zero, size: Defaults[.windowSize]),
             identifier: Bundle.main.bundleIdentifier ?? "com.kaigedong.manispocket",

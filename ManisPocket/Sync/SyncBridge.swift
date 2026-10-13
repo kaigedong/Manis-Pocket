@@ -8,7 +8,15 @@ import Foundation
 /// Architecture:
 ///   HistoryManager (Rust) → SyncEngine → ClipboardObserver (this class)
 ///       → History.shared.add() / NotificationCenter → SwiftUI
-class ManisPocketSyncObserver: ClipboardObserver {
+final class ManisPocketSyncObserver: ClipboardObserver {
+    private let notifyPeerConnected: @Sendable (String) -> Void
+
+    init(notifyPeerConnected: @escaping @Sendable (String) -> Void = { displayName in
+        Notifier.notify(body: "\(displayName) connected", sound: .knock)
+    }) {
+        self.notifyPeerConnected = notifyPeerConnected
+    }
+
     func onItemReceived(item: ClipboardItem) {
         Task { @MainActor in
             guard AppState.shared.history.core.syncShouldApplyCurrentClipboard(eventId: item.id) else {
@@ -60,9 +68,9 @@ class ManisPocketSyncObserver: ClipboardObserver {
     func onPeerDiscovered(peerId: String, displayName: String, addresses: [String], isConnected: Bool) {
         DispatchQueue.main.async {
             if isConnected {
-                Notifier.notify(body: "\(displayName) connected", sound: .knock)
-                NotificationCenter.default.post(name: NSNotification.Name("showSyncSettings"), object: nil)
+                self.notifyPeerConnected(displayName)
             }
+            // Discovery and reconnection are background events, not requests to open settings.
             NotificationCenter.default.post(name: .syncPeerDiscovered, object: nil, userInfo: [
                 "peerID": peerId,
                 "displayName": displayName,

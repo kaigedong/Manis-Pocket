@@ -12,4 +12,5 @@ extension Settings.PaneIdentifier {
     static let ignore = Self("ignore")
     static let pins = Self("pins")
     static let storage = Self("storage")
+    static let sync = Self("sync")
 }

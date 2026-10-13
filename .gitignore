@@ -31,3 +31,4 @@ ManisPocket/.DS_Store
 .sisyphus/
 .vscode/
 *.swp
+__pycache__/

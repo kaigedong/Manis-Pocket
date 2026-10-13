@@ -2,7 +2,10 @@ name: Build and Release
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 on:
   push:
@@ -12,8 +15,32 @@ on:
   workflow_dispatch:
 
 jobs:
+  version:
+    name: Resolve shared release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build_number: ${{ steps.version.outputs.build_number }}
+      tag: ${{ steps.version.outputs.tag }}
+      channel: ${{ steps.version.outputs.channel }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test release metadata
+        run: python3 -m unittest discover -s scripts/tests -v
+      - id: version
+        name: Determine version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python3 scripts/release-version.py \
+            --ref "$GITHUB_REF" \
+            --run-number "$GITHUB_RUN_NUMBER" \
+            --event "$EVENT_NAME" >> "$GITHUB_OUTPUT"
+
   build-macos:
     name: Build Manis Pocket (macOS)
+    needs: version
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -22,20 +49,6 @@ jobs:
         run: |
           sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
           xcodebuild -version
-
-      - id: version
-        name: Determine version
-        run: |
-          SHORT_SHA="${GITHUB_SHA:0:7}"
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-            echo "channel=stable" >> "$GITHUB_OUTPUT"
-          else
-            VERSION="2.7.0-beta.$SHORT_SHA"
-            echo "channel=beta" >> "$GITHUB_OUTPUT"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "build_num=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -58,8 +71,8 @@ jobs:
             ONLY_ACTIVE_ARCH=YES \
             COMPILER_INDEX_STORE_ENABLE=NO \
             DEBUG_INFORMATION_FORMAT=dwarf \
-            MARKETING_VERSION="${{ steps.version.outputs.version }}" \
-            CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build_num }}" \
+            MARKETING_VERSION="${{ needs.version.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ needs.version.outputs.build_number }}" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="-" \
             DEVELOPMENT_TEAM="" \
@@ -87,6 +100,7 @@ jobs:
 
   build-android:
     name: Build Manis Pocket (Android)
+    needs: version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -124,7 +138,16 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - run: cd android && chmod +x gradlew && ./gradlew assembleDebug
+      - name: Build Android with shared version
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug \
+            -PappVersionName="$RELEASE_VERSION" \
+            -PappVersionCode="$RELEASE_BUILD_NUMBER"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -133,13 +156,27 @@ jobs:
 
   release:
     name: Publish Release
-    if: github.event_name != 'pull_request'
-    needs: [build-macos, build-android]
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')) &&
+      needs.version.outputs.publish == 'true'
+    needs: [version, build-macos, build-android]
     runs-on: ubuntu-latest
+    concurrency:
+      group: publish-manis-pocket-releases
+      cancel-in-progress: false
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ needs.version.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      RELEASE_BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
+      RELEASE_CHANNEL: ${{ needs.version.outputs.channel }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           name: ManisPocket-macOS
@@ -147,30 +184,49 @@ jobs:
         with:
           name: ManisPocket-Android
 
-      - id: channel
+      - name: Generate matching Sparkle feed
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            echo "type=stable" >> "$GITHUB_OUTPUT"
-          else
-            echo "type=beta" >> "$GITHUB_OUTPUT"
+          FEED_NAME=appcast.xml
+          if [[ "$RELEASE_CHANNEL" == beta ]]; then
+            FEED_NAME=appcast-beta.xml
           fi
+          mkdir -p release-feed
+          python3 scripts/generate-appcast.py \
+            --version "$RELEASE_VERSION" \
+            --build-number "$RELEASE_BUILD_NUMBER" \
+            --tag "$RELEASE_TAG" \
+            --repository "$GITHUB_REPOSITORY" \
+            --archive ManisPocket.app.zip \
+            --channel "$RELEASE_CHANNEL" \
+            --output "release-feed/$FEED_NAME"
 
-      - if: steps.channel.outputs.type == 'beta'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish immutable versioned release
+        run: bash scripts/publish-release.sh
+
+      - name: Update channel feed without downgrading
         run: |
-          gh release delete latest-beta --yes --cleanup-tag 2>/dev/null || true
-          gh release create latest-beta ManisPocket.app.zip app-debug.apk appcast-beta.xml \
-            --title "Manis Pocket Beta" \
-            --notes "Automated beta build ($GITHUB_SHA)." \
-            --prerelease
-
-      - if: steps.channel.outputs.type == 'stable'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            ManisPocket.app.zip
-            app-debug.apk
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FEED_NAME=appcast.xml
+          if [[ "$RELEASE_CHANNEL" == beta ]]; then
+            FEED_NAME=appcast-beta.xml
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # User pushes can advance master even while release jobs are serialized.
+          # Reapply the build-number guard to the newest branch on every retry.
+          for attempt in 1 2 3; do
+            git fetch origin master
+            git checkout -B publish-feed origin/master
+            python3 scripts/update-appcast.py \
+              --source "release-feed/$FEED_NAME" --destination "$FEED_NAME"
+            git add "$FEED_NAME"
+            if git diff --cached --quiet; then
+              exit 0
+            fi
+            git -c core.editor=true commit -m "chore: update $RELEASE_CHANNEL feed to $RELEASE_VERSION [skip ci]"
+            if git push origin HEAD:master; then
+              exit 0
+            fi
+            echo "Feed push attempt $attempt failed; retrying against current master"
+          done
+          echo "Could not publish channel feed after three attempts" >&2
+          exit 1

@@ -6,7 +6,7 @@ Manis Pocket 是轻量的剪贴板历史工具，支持快速搜索、固定常�
 
 ## 安装
 
-macOS（Apple Silicon，macOS 14 或更新版本）下载[当前测试版 ManisPocket.app.zip](https://github.com/kaigedong/Manis-Pocket/releases/download/latest-beta/ManisPocket.app.zip)，解压后将 `ManisPocket.app` 移到“应用程序”。当前测试版采用临时签名，尚未经过 Apple 公证；如果 macOS 阻止首次打开，先尝试打开一次，再按 [Apple 的说明](https://support.apple.com/zh-cn/102445)在“系统设置 → 隐私与安全性”中选择“仍要打开”。[latest-beta 发布页](https://github.com/kaigedong/Manis-Pocket/releases/tag/latest-beta)会持续提供最新的 macOS 安装包。Android 版本仍在开发中。
+macOS（Apple Silicon，macOS 14 或更新版本）在[发布列表](https://github.com/kaigedong/Manis-Pocket/releases)中选择最新的版本化发布，下载其中的 `ManisPocket.app.zip`，解压后将 `ManisPocket.app` 移到“应用程序”。每次发布保留独立版本和安装包，不再覆盖 `latest-beta`。当前测试版采用临时签名，尚未经过 Apple 公证；如果 macOS 阻止首次打开，先尝试打开一次，再按 [Apple 的说明](https://support.apple.com/zh-cn/102445)在“系统设置 → 隐私与安全性”中选择“仍要打开”。Android 版本仍在开发中。
 
 ## 使用
 
@@ -48,6 +48,21 @@ Android 构建需要 Android SDK/NDK 和 Rust Android target：
 ```sh
 bash scripts/build-rust-android.sh arm64
 cd android && ./gradlew assembleDebug
+```
+
+### 自动版本与发布
+
+- `master` 每次成功的 **Build and Release** 工作流使用 `2.7.<github.run_number>`，例如 `2.7.153`，创建独立的 `build-2.7.153` 预发布。规则与同目录 Manis 项目的运行序号版本一致；失败或取消的运行会留下编号空缺。
+- 同一工作流重跑保持版本号和标签不变。已发布安装包不覆盖、不删除、不移动标签；尚未发布的草稿可以补齐。
+- 推送 `vX.Y.Z`（三个纯数字组件）标签发布稳定版；PR、开发分支和手动运行只生成构建产物，不发布。Linux 的 `wayland-*` 发布流程保持不变。
+- macOS 展示版本和 Android `versionName` 共用上述版本，macOS 构建号和 Android `versionCode` 共用工作流运行序号。不要重建或重置该工作流的编号；旧标签指向不同提交时发布会失败。
+- 发布后由 GitHub Actions 提交真实的 `appcast.xml` 或 `appcast-beta.xml` 到 `master`（带 `[skip ci]`，不会循环构建）。更新文件记录真实版本、构建号、安装包大小，并指向固定版本下载地址；较旧运行的重跑不会使更新源降级。该步骤需要 Actions 对 `master` 的写入权限。
+- 不再维护 `latest-beta` 滚动发布。使用旧版应用的用户需手动安装一次新的版本化构建，之后测试版更新从固定的仓库更新源发现新版本。
+
+发布元数据与离线发布逻辑可本地测试，不需要 GitHub token：
+
+```sh
+python3 -m unittest discover -s scripts/tests -v
 ```
 
 ## 许可证

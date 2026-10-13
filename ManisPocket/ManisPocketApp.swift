@@ -1,6 +1,19 @@
 import SwiftUI
 
 @main
+enum ManisPocketEntryPoint {
+    @MainActor
+    static func main() {
+        // dyld must load every linked framework before reaching this entry point.
+        // Do not initialize the app, database, clipboard or sync in packaging checks.
+        if CommandLine.arguments.contains("--startup-smoke-test") {
+            print("Manis Pocket startup smoke test passed")
+            return
+        }
+        ManisPocketApp.main()
+    }
+}
+
 struct ManisPocketApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 

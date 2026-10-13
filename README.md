@@ -58,6 +58,7 @@ cd android && ./gradlew assembleDebug
 - macOS 展示版本和 Android `versionName` 共用上述版本，macOS 构建号和 Android `versionCode` 共用工作流运行序号。不要重建或重置该工作流的编号；旧标签指向不同提交时发布会失败。
 - 发布后由 GitHub Actions 提交真实的 `appcast.xml` 或 `appcast-beta.xml` 到 `master`（带 `[skip ci]`，不会循环构建）。更新文件记录真实版本、构建号、安装包大小，并指向固定版本下载地址；较旧运行的重跑不会使更新源降级。该步骤需要 Actions 对 `master` 的写入权限。
 - 不再维护 `latest-beta` 滚动发布。使用旧版应用的用户需手动安装一次新的版本化构建，之后测试版更新从固定的仓库更新源发现新版本。
+- 当前 CI 安装包使用 ad-hoc 临时签名，没有 Apple Team ID，因此仅对此构建关闭 Hardened Runtime，避免动态框架被 library validation 拒绝加载；项目的正式证书构建默认设置不变。临时包仍未公证。发布前除了验证签名，还会解压最终 ZIP 并执行无副作用的 `--startup-smoke-test`，确认实际可执行文件及其链接框架可启动。
 
 发布元数据与离线发布逻辑可本地测试，不需要 GitHub token：
 

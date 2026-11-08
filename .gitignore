@@ -32,3 +32,6 @@ ManisPocket/.DS_Store
 .vscode/
 *.swp
 __pycache__/
+
+# ── Dev UI previews ───────────────────────────────────────────────
+.ui-preview/

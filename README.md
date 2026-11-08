@@ -19,6 +19,8 @@ macOS（Apple Silicon，macOS 14 或更新版本）在[发布列表](https://git
 
 Linux 端使用原生 GTK4 图形应用和 Rust 同步引擎，不依赖 Tauri。Arch Linux 安装 `manis-pocket-bin` 后，从应用菜单打开 **Manis Pocket**，也可以在 Wayland 会话中运行 `manis-pocket`。窗口的 **History** 可搜索和重新复制文本，**Devices** 可发现、连接和配对设备。关闭窗口后同步仍在后台运行；重新从应用菜单打开窗口，点击 **Quit** 才会退出。
 
+Linux 窗口采用与 macOS 版本一致的视觉样式：紧凑列表、圆角选中行、内嵌细分隔线、搜索匹配加粗，以及底部快捷键提示。快捷键：`Return` 复制所选条目，`↑`/`↓` 选择，`Esc` 清除搜索（搜索为空时再按一次隐藏窗口），`Ctrl+F` 聚焦搜索框，`Ctrl+1`/`Ctrl+2` 切换 History/Devices，`Ctrl+Q` 退出。
+
 从仓库构建时，先安装 GTK4 开发包和 `wl-clipboard`（提供 `wl-copy`、`wl-paste`）：
 
 ```sh

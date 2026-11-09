@@ -1,12 +1,20 @@
 name: Publish Arch release and AUR
 
+# Chained off the Arch package build, the same way the Manis repository chains
+# its AUR publish off Package. A successful master push therefore publishes the
+# `wayland-*` release and updates AUR without a manual dispatch.
+#
+# The upstream run's head_sha is the source of truth for the checkout, the
+# version and the release target: the Build and Release workflow commits an
+# appcast update to master after each release, so the branch tip is usually NOT
+# the commit that was packaged.
+
 on:
-  workflow_dispatch:
-    inputs:
-      arch_run_id:
-        description: Successful Arch Linux package CI run ID for this master commit
-        required: true
-        type: string
+  workflow_run:
+    workflows:
+      - Arch Linux package
+    types:
+      - completed
 
 permissions:
   actions: read
@@ -19,6 +27,10 @@ concurrency:
 jobs:
   release:
     name: Publish immutable Arch release
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'master'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -27,30 +39,40 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
       - name: Verify Arch CI run and download package
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
-          ARCH_RUN_ID: ${{ inputs.arch_run_id }}
+          ARCH_RUN_ID: ${{ github.event.workflow_run.id }}
+          ARCH_SHA: ${{ github.event.workflow_run.head_sha }}
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" != 'refs/heads/master' || ! "$ARCH_RUN_ID" =~ ^[0-9]+$ ]]; then
-            echo 'dispatch on master with a numeric Arch CI run ID' >&2
+          if [[ ! "$ARCH_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo 'workflow_run payload is missing the Arch CI run ID' >&2
             exit 1
           fi
           run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ARCH_RUN_ID")"
           if [[ "$(jq -r .name <<< "$run_json")" != 'Arch Linux package' ||
                 "$(jq -r .event <<< "$run_json")" != 'push' ||
                 "$(jq -r .head_branch <<< "$run_json")" != 'master' ||
-                "$(jq -r .head_sha <<< "$run_json")" != "$GITHUB_SHA" ||
+                "$(jq -r .head_sha <<< "$run_json")" != "$ARCH_SHA" ||
                 "$(jq -r .conclusion <<< "$run_json")" != 'success' ]]; then
-            echo 'Arch CI run does not match this successful master commit' >&2
+            echo 'Arch CI run is not a successful master push for this commit' >&2
+            exit 1
+          fi
+          if [[ "$(git rev-parse HEAD)" != "$ARCH_SHA" ]]; then
+            echo 'checkout does not match the packaged Arch CI commit' >&2
             exit 1
           fi
 
           pkgver="$(bash packaging/package-version.sh)"
+          if [[ "$pkgver" != *".g${ARCH_SHA:0:7}" ]]; then
+            echo "package version $pkgver does not match commit ${ARCH_SHA:0:7}" >&2
+            exit 1
+          fi
           asset_name="manis-pocket-wayland-${pkgver}-1-x86_64.pkg.tar.zst"
           gh run download "$ARCH_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
@@ -74,9 +96,9 @@ jobs:
             gh release create "$release_tag" \
               "dist/$asset_name" "dist/$asset_name.sha256" \
               --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
+              --target "$ARCH_SHA" \
               --title "Manis Pocket Linux $pkgver" \
-              --notes "Arch Linux GTK4 clipboard manager and Wayland sync client built and tested from $GITHUB_SHA." \
+              --notes "Arch Linux GTK4 clipboard manager and Wayland sync client built and tested from $ARCH_SHA." \
               --prerelease --latest=false
           fi
           echo "pkgver=$pkgver" >> "$GITHUB_OUTPUT"
@@ -91,6 +113,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Configure AUR SSH identity
         env:

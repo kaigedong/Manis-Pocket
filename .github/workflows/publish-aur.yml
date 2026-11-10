@@ -4,6 +4,11 @@ name: Publish Arch release and AUR
 # its AUR publish off Package. A successful master push therefore publishes the
 # `wayland-*` release and updates AUR without a manual dispatch.
 #
+# The Linux package reuses the product version of the `build-*` release that
+# Build and Release published for the same commit, so `Manis Pocket 2.7.119`
+# and `Manis Pocket Linux 2.7.119` are two artifacts of one release rather than
+# two unrelated version lines.
+#
 # The upstream run's head_sha is the source of truth for the checkout, the
 # version and the release target: the Build and Release workflow commits an
 # appcast update to master after each release, so the branch tip is usually NOT
@@ -69,8 +74,24 @@ jobs:
           fi
 
           pkgver="$(bash packaging/package-version.sh)"
-          if [[ "$pkgver" != *".g${ARCH_SHA:0:7}" ]]; then
-            echo "package version $pkgver does not match commit ${ARCH_SHA:0:7}" >&2
+          # The Linux package carries the same product version as the
+          # macOS/Android artifacts of this commit, so require the matching
+          # Build and Release tag to exist on the packaged commit. Without it
+          # the number below would be an unreleased placeholder.
+          if [[ ! "$pkgver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "package version '$pkgver' is not a product release version" >&2
+            exit 1
+          fi
+          git fetch --tags --force --quiet origin '+refs/tags/*:refs/tags/*'
+          release_version_tag=""
+          for candidate in "build-$pkgver" "v$pkgver"; do
+            if [[ "$(git rev-parse --verify --quiet "refs/tags/$candidate^{commit}" || true)" == "$ARCH_SHA" ]]; then
+              release_version_tag="$candidate"
+              break
+            fi
+          done
+          if [[ -z "$release_version_tag" ]]; then
+            echo "no release tag for version $pkgver on $ARCH_SHA" >&2
             exit 1
           fi
           asset_name="manis-pocket-wayland-${pkgver}-1-x86_64.pkg.tar.zst"

@@ -24,6 +24,28 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The Arch package reuses the product version of the release that the
+      # Build and Release workflow publishes for this same commit, so Linux and
+      # macOS/Android artifacts of one release share a single number. That
+      # workflow runs concurrently and creates the tag after its builds finish,
+      # so wait for it instead of inventing an independent version here.
+      - name: Wait for the matching release tag
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          for attempt in $(seq 1 40); do
+            git fetch --tags --force --quiet origin '+refs/tags/*:refs/tags/*' || true
+            tags="$(git tag --points-at HEAD --list 'build-*' 'v*')"
+            if [[ -n "$tags" ]]; then
+              echo "Release tag for $(git rev-parse --short=7 HEAD): $(tr '\n' ' ' <<< "$tags")"
+              exit 0
+            fi
+            echo "No release tag for $(git rev-parse --short=7 HEAD) yet (attempt $attempt/40); waiting"
+            sleep 30
+          done
+          echo "Timed out waiting for the Build and Release tag of this commit" >&2
+          exit 1
+
       - name: Prepare unprivileged builder
         run: |
           useradd --create-home --shell /bin/bash builder
@@ -39,8 +61,21 @@ jobs:
 
       - name: Inspect package
         run: |
+          pkgver="$(bash packaging/package-version.sh)"
+          echo "resolved pkgver: $pkgver"
+          if [[ "$GITHUB_EVENT_NAME" == 'push' && ! "$pkgver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "a master build must carry a release version, got '$pkgver'" >&2
+            exit 1
+          fi
           package_path="$(find packaging/archlinux -maxdepth 1 -name 'manis-pocket-wayland-[0-9]*.pkg.tar.zst' -print -quit)"
           test -n "$package_path"
+          case "$(basename "$package_path")" in
+            "manis-pocket-wayland-${pkgver}-1-x86_64.pkg.tar.zst") ;;
+            *)
+              echo "package name does not match pkgver $pkgver" >&2
+              exit 1
+              ;;
+          esac
           pacman -Qip "$package_path"
           pacman -Qlp "$package_path"
           namcap "$package_path"

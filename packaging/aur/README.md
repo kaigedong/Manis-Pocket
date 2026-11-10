@@ -14,11 +14,16 @@ window keeps synchronization running; use **Quit** to stop it.
 
 The [Arch CI](../../.github/workflows/arch-package.yml) builds and tests the
 checkout on every push to `master`, then uploads a package and its SHA-256 as
-workflow artifacts. Once the run succeeds, dispatch
-[Publish Arch release and AUR](../../.github/workflows/publish-aur.yml) with
-that Arch CI run ID. The publisher checks the run's commit, creates an immutable
-`wayland-${pkgver}` GitHub release, renders this package from `PKGBUILD.in`,
-generates `.SRCINFO` on Arch, and pushes both files to AUR.
+workflow artifacts. A master build waits for the `build-X.Y.Z` tag that the
+Build and Release workflow publishes for the same commit, and packages itself
+under that shared product version, so the Linux artifacts never grow a version
+line of their own. Once the run succeeds,
+[Publish Arch release and AUR](../../.github/workflows/publish-aur.yml) runs
+automatically, verifies the run's commit against that release tag, creates an
+immutable `wayland-${pkgver}` GitHub release, renders this package from
+`PKGBUILD.in`, generates `.SRCINFO` on Arch, and pushes both files to AUR.
+Pull request and manual builds have no release tag, so they fall back to a
+`0.0.0.r<commits>.g<sha>` pkgver and produce artifacts only.
 
 The publisher needs `AUR_SSH_PRIVATE_KEY` in the **Manis-Pocket** GitHub
 repository. Its public key must be registered with the `bobosingle` AUR account.

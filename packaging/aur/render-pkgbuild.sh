@@ -11,8 +11,8 @@ checksum="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
 output_directory="$3"
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.r[0-9]+\.g[0-9a-f]{7,40}$ ]]; then
-  echo "invalid Manis Pocket Wayland package version" >&2
+if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+  echo "AUR pkgver must be a product release version (MAJOR.MINOR.PATCH), got '$version'" >&2
   exit 1
 fi
 if [[ ! "$checksum" =~ ^[0-9a-f]{64}$ ]]; then

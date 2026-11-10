@@ -875,7 +875,7 @@ external fun uniffi_manis_pocket_core_fn_method_historymanager_sync_broadcast_up
 ): Unit
 external fun uniffi_manis_pocket_core_fn_method_historymanager_sync_confirm_current_clipboard(`ptr`: Long,`eventId`: RustBuffer.ByValue,`success`: Byte,uniffi_out_err: UniffiRustCallStatus,
 ): Unit
-external fun uniffi_manis_pocket_core_fn_method_historymanager_sync_observe_local_clipboard(`ptr`: Long,`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+external fun uniffi_manis_pocket_core_fn_method_historymanager_sync_observe_local_clipboard(`ptr`: Long,`content`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Unit
 external fun uniffi_manis_pocket_core_fn_method_historymanager_sync_refresh_discovery(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): Unit
@@ -1108,7 +1108,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_manis_pocket_core_checksum_method_historymanager_sync_confirm_current_clipboard() != 63805.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_manis_pocket_core_checksum_method_historymanager_sync_observe_local_clipboard() != 1342.toShort()) {
+    if (lib.uniffi_manis_pocket_core_checksum_method_historymanager_sync_observe_local_clipboard() != 37709.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_manis_pocket_core_checksum_method_historymanager_sync_refresh_discovery() != 49637.toShort()) {
@@ -2406,9 +2406,12 @@ public interface HistoryManagerInterface {
     fun `syncConfirmCurrentClipboard`(`eventId`: kotlin.String, `success`: kotlin.Boolean)
 
     /**
-     * Report the actual system clipboard at startup or after an ignored copy.
+     * Report the actual system clipboard.
+     *
+     * `None` means the clipboard is empty. Callers must not call this for
+     * content the protocol cannot share: that would clear the peer.
      */
-    fun `syncObserveLocalClipboard`(`text`: kotlin.String?)
+    fun `syncObserveLocalClipboard`(`content`: ClipboardContent?)
 
     /**
      * Restart discovery to find new peers.
@@ -2870,14 +2873,17 @@ open class HistoryManager: Disposable, AutoCloseable, HistoryManagerInterface
 
 
     /**
-     * Report the actual system clipboard at startup or after an ignored copy.
-     */override fun `syncObserveLocalClipboard`(`text`: kotlin.String?)
+     * Report the actual system clipboard.
+     *
+     * `None` means the clipboard is empty. Callers must not call this for
+     * content the protocol cannot share: that would clear the peer.
+     */override fun `syncObserveLocalClipboard`(`content`: ClipboardContent?)
         =
     callWithHandle {
     uniffiRustCall() { _status ->
     UniffiLib.uniffi_manis_pocket_core_fn_method_historymanager_sync_observe_local_clipboard(
         it,
-        FfiConverterOptionalString.lower(`text`),_status)
+        FfiConverterOptionalTypeClipboardContent.lower(`content`),_status)
 }
     }
 
@@ -3707,3 +3713,31 @@ public object FfiConverterSequenceTypeSearchResult: FfiConverterRustBuffer<List<
     }
 }
 
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeClipboardContent: FfiConverterRustBuffer<ClipboardContent?> {
+    override fun read(buf: ByteBuffer): ClipboardContent? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeClipboardContent.read(buf)
+    }
+
+    override fun allocationSize(value: ClipboardContent?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeClipboardContent.allocationSize(value)
+        }
+    }
+
+    override fun write(value: ClipboardContent?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeClipboardContent.write(value, buf)
+        }
+    }
+}

@@ -196,7 +196,9 @@ class HistoryViewModel : ViewModel() {
                     LogManager.e("Sync", "Cannot read initial clipboard", e)
                     null
                 }
-            core.syncObserveLocalClipboard(initialText)
+            if (initialText != null && initialText.isNotEmpty()) {
+                core.syncObserveLocalClipboard(textContent(initialText))
+            }
             _syncEnabled.value = true
             // Persist so sync auto-starts on next launch.
             appContext
@@ -356,8 +358,18 @@ class HistoryViewModel : ViewModel() {
     }
 
     fun observeCurrentClipboard(text: String?) {
-        core?.syncObserveLocalClipboard(text)
+        // Android only ships plain text. Copying anything else (an image, a
+        // file) must stay silent instead of reporting an empty clipboard,
+        // which would wipe what the peer already has.
+        if (text == null || text.isEmpty()) return
+        core?.syncObserveLocalClipboard(textContent(text))
     }
+
+    private fun textContent(text: String): ClipboardContent =
+        ClipboardContent(
+            contentType = "public.utf8-plain-text",
+            value = text.toByteArray(Charsets.UTF_8),
+        )
 
     fun deleteItem(id: String) {
         viewModelScope.launch {

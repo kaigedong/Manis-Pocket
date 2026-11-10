@@ -55,7 +55,7 @@ class GenerateAppcastTests(unittest.TestCase):
                 self.assertEqual(root.attrib["version"], "2.0")
                 self.assertEqual(root.findtext("channel/title"), title)
                 self.assertEqual(root.findtext("channel/link"),
-                                 f"https://raw.githubusercontent.com/kaigedong/Manis-Pocket/master/{feed}")
+                                 f"https://raw.githubusercontent.com/kaigedong/Manis-Pocket/feeds/{feed}")
                 item = root.find("channel/item")
                 self.assertEqual(item.findtext("pubDate"), "Wed, 10 Jun 2026 10:30:45 GMT")
                 self.assertEqual(item.findtext(SPARKLE + "minimumSystemVersion"), "14.0")

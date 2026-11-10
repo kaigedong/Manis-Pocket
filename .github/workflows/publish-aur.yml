@@ -1,9 +1,8 @@
 name: Publish Arch release and AUR
 
 # Chained off the Arch package build, the same way the Manis repository chains
-# its AUR publish off Package. A successful master push therefore attaches the
-# Linux package to the product release and updates AUR without a manual
-# dispatch.
+# its AUR publish off Package. A successful release therefore attaches the Linux
+# package to the product release and updates AUR without a manual dispatch.
 #
 # The Linux package is not a release of its own: it reuses the product version
 # and the `build-*` GitHub release of the same commit, so one release carries
@@ -33,10 +32,12 @@ concurrency:
 jobs:
   release:
     name: Attach Linux package to the product release
+    # Arch CI is now chained off Build and Release, so its own run reports
+    # `workflow_run`. Pull-request builds of Arch CI report `pull_request` and
+    # are dropped here; the release tag check below covers the rest.
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'master'
+      github.event.workflow_run.event == 'workflow_run'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     outputs:
@@ -63,11 +64,10 @@ jobs:
           fi
           run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ARCH_RUN_ID")"
           if [[ "$(jq -r .name <<< "$run_json")" != 'Arch Linux package' ||
-                "$(jq -r .event <<< "$run_json")" != 'push' ||
-                "$(jq -r .head_branch <<< "$run_json")" != 'master' ||
+                "$(jq -r .event <<< "$run_json")" != 'workflow_run' ||
                 "$(jq -r .head_sha <<< "$run_json")" != "$ARCH_SHA" ||
                 "$(jq -r .conclusion <<< "$run_json")" != 'success' ]]; then
-            echo 'Arch CI run is not a successful master push for this commit' >&2
+            echo 'Arch CI run is not a successful release build for this commit' >&2
             exit 1
           fi
           if [[ "$(git rev-parse HEAD)" != "$ARCH_SHA" ]]; then

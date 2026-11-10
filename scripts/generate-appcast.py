@@ -83,7 +83,7 @@ def main(argv=None):
     channel = ET.SubElement(rss, "channel")
     ET.SubElement(channel, "title").text = brand
     ET.SubElement(channel, "link").text = (
-        f"https://raw.githubusercontent.com/{args.repository}/master/{feed_name}")
+        f"https://raw.githubusercontent.com/{args.repository}/feeds/{feed_name}")
     ET.SubElement(channel, "description").text = f"Manis Pocket {args.channel} updates."
     ET.SubElement(channel, "language").text = "en"
     item = ET.SubElement(channel, "item")

@@ -11,6 +11,12 @@ on:
   push:
     branches: [master, feat/p2p-sync, refactor/rust-shared-core]
     tags: ['v*']
+    # A docs-only push must not queue another full macOS + Android release
+    # build: master pushes never cancel each other, so every one of them would
+    # serialize behind the previous release and produce its own version.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   pull_request:
   workflow_dispatch:
 
@@ -213,22 +219,26 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # User pushes can advance master even while release jobs are serialized.
-          # Reapply the build-number guard to the newest branch on every retry.
+          # The feed lives on its own branch, so master history stays free of
+          # machine commits and a docs push cannot race a feed update. The
+          # updater has to be copied out first: the feed branch carries nothing
+          # but the two XML files.
+          updater="$RUNNER_TEMP/update-appcast.py"
+          cp scripts/update-appcast.py "$updater"
           for attempt in 1 2 3; do
-            git fetch origin master
-            git checkout -B publish-feed origin/master
-            python3 scripts/update-appcast.py \
+            git fetch origin feeds
+            git checkout -B publish-feed FETCH_HEAD
+            python3 "$updater" \
               --source "release-feed/$FEED_NAME" --destination "$FEED_NAME"
             git add "$FEED_NAME"
             if git diff --cached --quiet; then
               exit 0
             fi
-            git -c core.editor=true commit -m "chore: update $RELEASE_CHANNEL feed to $RELEASE_VERSION [skip ci]"
-            if git push origin HEAD:master; then
+            git -c core.editor=true commit -m "chore(feed): update $RELEASE_CHANNEL feed to $RELEASE_VERSION"
+            if git push origin HEAD:refs/heads/feeds; then
               exit 0
             fi
-            echo "Feed push attempt $attempt failed; retrying against current master"
+            echo "Feed push attempt $attempt failed; retrying against current feeds"
           done
           echo "Could not publish channel feed after three attempts" >&2
           exit 1

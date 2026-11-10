@@ -1,0 +1,42 @@
+# Maintainer: bobo <https://aur.archlinux.org/account/bobosingle>
+
+# The package is named after the product, not after the sync helper binary it
+# ships: `manis-pocket-wayland` is an implementation detail (a second executable
+# in /usr/bin), so naming the package that way made one release look like two
+# unrelated products.
+pkgname=manis-pocket
+pkgver="$(bash "$startdir/../package-version.sh")"
+pkgrel=1
+pkgdesc='Manis Pocket GTK4 clipboard manager and Wayland sync client'
+arch=('x86_64')
+url='https://github.com/kaigedong/Manis-Pocket'
+license=('MIT')
+# wl-copy and wl-paste are executed at runtime, so namcap cannot detect this dependency.
+depends=('glibc' 'libgcc' 'gtk4' 'wl-clipboard')
+makedepends=('cargo' 'git' 'rust' 'gtk4')
+options=('!lto')
+source=()
+sha256sums=()
+
+build() {
+  cd "$startdir/../.."
+  CARGO_TARGET_DIR="$srcdir/target" cargo build --release --locked -p manis-pocket-wayland -p manis-pocket-linux
+}
+
+check() {
+  cd "$startdir/../.."
+  CARGO_TARGET_DIR="$srcdir/target" cargo test --release --locked -p manis-pocket-sync --lib register::tests
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/manis-pocket" \
+    "$pkgdir/usr/bin/manis-pocket"
+  install -Dm755 "$srcdir/target/release/manis-pocket-wayland" \
+    "$pkgdir/usr/bin/manis-pocket-wayland"
+  install -Dm644 "$startdir/io.github.kaigedong.ManisPocket.desktop" \
+    "$pkgdir/usr/share/applications/io.github.kaigedong.ManisPocket.desktop"
+  install -Dm644 "$startdir/../../ManisPocket/Assets.xcassets/AppIcon.appiconset/AppIcon (Big Sur)-256w.png" \
+    "$pkgdir/usr/share/icons/hicolor/256x256/apps/io.github.kaigedong.ManisPocket.png"
+  install -Dm644 "$startdir/../../LICENSE" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

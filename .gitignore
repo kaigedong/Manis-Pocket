@@ -1,0 +1,37 @@
+# ── Xcode ─────────────────────────────────────────────────────────
+xcuserdata/
+ManisPocket.xcodeproj/project.xcworkspace/xcshareddata
+ManisPocket/build/
+build/
+
+# ── Rust ──────────────────────────────────────────────────────────
+target/
+manis-pocket-sync/target/
+manis-pocket-sync/Cargo.lock
+manis-pocket-sync/manis_pocket_sync.h
+
+# ── Android ───────────────────────────────────────────────────────
+android/.gradle/
+android/build/
+android/app/build/
+android/app/src/main/jniLibs/
+android/local.properties
+*.apk
+*.aab
+
+# ── Arch package builds ───────────────────────────────────────────
+packaging/*/src/
+packaging/*/pkg/
+packaging/*/*.pkg.tar.*
+
+# ── IDE / OS ──────────────────────────────────────────────────────
+.idea
+.DS_Store
+ManisPocket/.DS_Store
+.sisyphus/
+.vscode/
+*.swp
+__pycache__/
+
+# ── Dev UI previews ───────────────────────────────────────────────
+.ui-preview/

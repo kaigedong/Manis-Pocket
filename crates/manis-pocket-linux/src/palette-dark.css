@@ -1,0 +1,21 @@
+/* Dark palette — approximates the macOS dark popover material. */
+
+@define-color mp_bg #262628;
+@define-color mp_fg rgba(255, 255, 255, 0.92);
+@define-color mp_secondary rgba(255, 255, 255, 0.56);
+@define-color mp_tertiary rgba(255, 255, 255, 0.34);
+@define-color mp_separator rgba(255, 255, 255, 0.11);
+@define-color mp_field rgba(255, 255, 255, 0.085);
+@define-color mp_hover rgba(255, 255, 255, 0.06);
+@define-color mp_selection rgba(10, 132, 255, 0.85);
+@define-color mp_accent #0a84ff;
+@define-color mp_accent_soft rgba(10, 132, 255, 0.22);
+@define-color mp_on_accent #ffffff;
+@define-color mp_segment_bg rgba(255, 255, 255, 0.075);
+@define-color mp_segment_active rgba(255, 255, 255, 0.16);
+@define-color mp_segment_shadow rgba(0, 0, 0, 0.35);
+@define-color mp_control rgba(255, 255, 255, 0.09);
+@define-color mp_control_hover rgba(255, 255, 255, 0.14);
+@define-color mp_ok #30d158;
+@define-color mp_warn #ff9f0a;
+@define-color mp_error #ff453a;

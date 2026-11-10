@@ -1,0 +1,244 @@
+name: Build and Release
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [master, feat/p2p-sync, refactor/rust-shared-core]
+    tags: ['v*']
+    # A docs-only push must not queue another full macOS + Android release
+    # build: master pushes never cancel each other, so every one of them would
+    # serialize behind the previous release and produce its own version.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  version:
+    name: Resolve shared release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build_number: ${{ steps.version.outputs.build_number }}
+      tag: ${{ steps.version.outputs.tag }}
+      channel: ${{ steps.version.outputs.channel }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test release metadata
+        run: python3 -m unittest discover -s scripts/tests -v
+      - id: version
+        name: Determine version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python3 scripts/release-version.py \
+            --ref "$GITHUB_REF" \
+            --run-number "$GITHUB_RUN_NUMBER" \
+            --event "$EVENT_NAME" >> "$GITHUB_OUTPUT"
+
+  build-macos:
+    name: Build Manis Pocket (macOS)
+    needs: version
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+          cache-on-failure: true
+      - run: bash scripts/build-rust-macos.sh
+      - run: ruby scripts/patch-xcode.rb
+
+      - name: Build
+        run: |
+          xcodebuild build \
+            -project ManisPocket.xcodeproj \
+            -scheme ManisPocket \
+            -configuration Release \
+            -derivedDataPath build \
+            -parallelizeTargets \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            DEBUG_INFORMATION_FORMAT=dwarf \
+            MARKETING_VERSION="${{ needs.version.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ needs.version.outputs.build_number }}" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="-" \
+            DEVELOPMENT_TEAM="" \
+            ENABLE_HARDENED_RUNTIME=NO \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES
+
+      - name: Verify and package
+        run: |
+          APP="build/Build/Products/Release/ManisPocket.app"
+          ARCHIVE="build/Build/Products/Release/ManisPocket.app.zip"
+
+          codesign --verify --deep --strict --verbose=4 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1
+
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARCHIVE"
+
+          VERIFY_DIR="$(mktemp -d)"
+          ditto -x -k "$ARCHIVE" "$VERIFY_DIR"
+          codesign --verify --deep --strict --verbose=4 "$VERIFY_DIR/ManisPocket.app"
+          python3 scripts/check-macos-startup.py --app "$VERIFY_DIR/ManisPocket.app"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ManisPocket-macOS
+          path: build/Build/Products/Release/ManisPocket.app.zip
+
+  build-android:
+    name: Build Manis Pocket (Android)
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with: { java-version: '17', distribution: 'temurin' }
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0 ndk;27.0.12077973'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+          cache-on-failure: true
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+
+      - run: sudo apt-get update && sudo apt-get install -y build-essential ninja-build
+
+      - name: Build Rust Android
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            bash scripts/build-rust-android.sh all
+          else
+            bash scripts/build-rust-android.sh arm64
+          fi
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Android with shared version
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug \
+            -PappVersionName="$RELEASE_VERSION" \
+            -PappVersionCode="$RELEASE_BUILD_NUMBER"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ManisPocket-Android
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+  release:
+    name: Publish Release
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')) &&
+      needs.version.outputs.publish == 'true'
+    needs: [version, build-macos, build-android]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: publish-manis-pocket-releases
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ needs.version.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      RELEASE_BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
+      RELEASE_CHANNEL: ${{ needs.version.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: ManisPocket-macOS
+      - uses: actions/download-artifact@v4
+        with:
+          name: ManisPocket-Android
+
+      - name: Generate matching Sparkle feed
+        run: |
+          FEED_NAME=appcast.xml
+          if [[ "$RELEASE_CHANNEL" == beta ]]; then
+            FEED_NAME=appcast-beta.xml
+          fi
+          mkdir -p release-feed
+          python3 scripts/generate-appcast.py \
+            --version "$RELEASE_VERSION" \
+            --build-number "$RELEASE_BUILD_NUMBER" \
+            --tag "$RELEASE_TAG" \
+            --repository "$GITHUB_REPOSITORY" \
+            --archive ManisPocket.app.zip \
+            --channel "$RELEASE_CHANNEL" \
+            --output "release-feed/$FEED_NAME"
+
+      - name: Publish immutable versioned release
+        run: bash scripts/publish-release.sh
+
+      - name: Update channel feed without downgrading
+        run: |
+          FEED_NAME=appcast.xml
+          if [[ "$RELEASE_CHANNEL" == beta ]]; then
+            FEED_NAME=appcast-beta.xml
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # The feed lives on its own branch, so master history stays free of
+          # machine commits and a docs push cannot race a feed update. The
+          # updater has to be copied out first: the feed branch carries nothing
+          # but the two XML files.
+          updater="$RUNNER_TEMP/update-appcast.py"
+          cp scripts/update-appcast.py "$updater"
+          for attempt in 1 2 3; do
+            git fetch origin feeds
+            git checkout -B publish-feed FETCH_HEAD
+            python3 "$updater" \
+              --source "release-feed/$FEED_NAME" --destination "$FEED_NAME"
+            git add "$FEED_NAME"
+            if git diff --cached --quiet; then
+              exit 0
+            fi
+            git -c core.editor=true commit -m "chore(feed): update $RELEASE_CHANNEL feed to $RELEASE_VERSION"
+            if git push origin HEAD:refs/heads/feeds; then
+              exit 0
+            fi
+            echo "Feed push attempt $attempt failed; retrying against current feeds"
+          done
+          echo "Could not publish channel feed after three attempts" >&2
+          exit 1

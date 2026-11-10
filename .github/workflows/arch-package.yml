@@ -1,0 +1,94 @@
+name: Arch Linux package
+
+permissions:
+  contents: read
+
+# Runs after Build and Release, not on the push itself. Depending on that
+# workflow means the release tag and version already exist, so this build never
+# holds a runner polling for something another workflow has yet to create.
+on:
+  workflow_run:
+    workflows: [Build and Release]
+    types: [completed]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Linux GUI and Wayland sync on Arch x86_64
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install build dependencies
+        run: pacman -Syu --noconfirm --needed git rust gtk4 wl-clipboard namcap
+
+      - uses: actions/checkout@v4
+        with:
+          # For workflow_run, GITHUB_SHA is the default branch tip, not the
+          # commit that was released.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      # The container job runs as a different user than the one that created the
+      # checkout, so every later git call needs the workspace whitelisted.
+      - name: Trust the workspace for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # A released commit already carries its product version tag, so the number
+      # is resolved up front and the package is built once under it.
+      - name: Resolve the shared release version
+        shell: bash
+        run: |
+          pkgver="$(bash packaging/package-version.sh)"
+          echo "resolved pkgver: $pkgver"
+          if [[ "$GITHUB_EVENT_NAME" == 'workflow_run' && ! "$pkgver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "a released commit must resolve to a product version, got '$pkgver'" >&2
+            exit 1
+          fi
+
+      - name: Prepare unprivileged builder
+        run: |
+          useradd --create-home --shell /bin/bash builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Build package as an unprivileged user
+        run: |
+          runuser -u builder -- bash -c '
+            cd "$1"
+            cd packaging/archlinux
+            makepkg --noconfirm --cleanbuild
+          ' _ "$GITHUB_WORKSPACE"
+
+      - name: Inspect package
+        run: |
+          pkgver="$(bash packaging/package-version.sh)"
+          package_path="$(find packaging/archlinux -maxdepth 1 -name 'manis-pocket-[0-9]*.pkg.tar.zst' -print -quit)"
+          test -n "$package_path"
+          case "$(basename "$package_path")" in
+            "manis-pocket-${pkgver}-1-x86_64.pkg.tar.zst") ;;
+            *)
+              echo "package name does not match pkgver $pkgver" >&2
+              exit 1
+              ;;
+          esac
+          pacman -Qip "$package_path"
+          pacman -Qlp "$package_path"
+          namcap "$package_path"
+          mkdir -p dist
+          cp "$package_path" dist/
+          cd dist
+          sha256sum "$(basename "$package_path")" > "$(basename "$package_path").sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manis-pocket-arch-x86_64
+          path: |
+            dist/manis-pocket-*.pkg.tar.zst
+            dist/manis-pocket-*.pkg.tar.zst.sha256
+          if-no-files-found: error

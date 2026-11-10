@@ -1,0 +1,24 @@
+[defines]
+"feature = " = ""
+
+[export]
+include = [
+    "ManisPocketSync",
+    "manis_pocket_sync_*",
+]
+
+[fn]
+prefix = "manis_pocket_sync_"
+
+[struct]
+rename_fields = "SnakeCase"
+
+[enum]
+prefix_with_name = true
+rename_variants = "SnakeCase"
+
+[language]
+cpp = false
+
+[macro_expansion]
+bitflags = false

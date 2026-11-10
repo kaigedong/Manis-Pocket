@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Manis Pocket
+Comment=Clipboard history and device sync
+Exec=manis-pocket
+Icon=io.github.kaigedong.ManisPocket
+Terminal=false
+Categories=Utility;
+Keywords=clipboard;history;sync;

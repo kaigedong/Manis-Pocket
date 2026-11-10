@@ -1,0 +1,6 @@
+project: ManisPocket.xcodeproj
+retain_objc_accessible: true
+schemes:
+- ManisPocket
+targets:
+- ManisPocket

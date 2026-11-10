@@ -1,0 +1,17 @@
+"Title" = "Sync";
+"Enable" = "Enable:";
+"Enable Clipboard Sync" = "Enable Clipboard Sync";
+"This Device" = "This Device:";
+"Discovered Devices" = "Discovered Devices:";
+"Paired Devices" = "Paired Devices:";
+"Pair" = "Pair";
+"Unpair" = "Unpair";
+"Scanning for devices..." = "Scanning for devices...";
+"No paired devices" = "No paired devices";
+"Connected" = "Connected";
+"Offline" = "Offline";
+"Edit Device" = "Edit Device";
+"Save" = "Save";
+"Cancel" = "Cancel";
+"Pairing Request" = "Pairing Request";
+"Confirm" = "Confirm";

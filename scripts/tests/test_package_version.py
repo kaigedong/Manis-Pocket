@@ -73,6 +73,13 @@ class PackageVersionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertRegex(result.stdout.strip(), FALLBACK_PATTERN)
 
+    def test_stable_tag_on_an_older_commit_is_ignored(self):
+        self.git("tag", "v2.8.0")
+        self.commit("later change")
+        result = self.resolve()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout.strip(), FALLBACK_PATTERN)
+
     def test_untagged_build_falls_back_to_a_vcs_version(self):
         result = self.resolve()
         self.assertEqual(result.returncode, 0, result.stderr)

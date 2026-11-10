@@ -1,13 +1,14 @@
 name: Publish Arch release and AUR
 
 # Chained off the Arch package build, the same way the Manis repository chains
-# its AUR publish off Package. A successful master push therefore publishes the
-# `wayland-*` release and updates AUR without a manual dispatch.
+# its AUR publish off Package. A successful master push therefore attaches the
+# Linux package to the product release and updates AUR without a manual
+# dispatch.
 #
-# The Linux package reuses the product version of the `build-*` release that
-# Build and Release published for the same commit, so `Manis Pocket 2.7.119`
-# and `Manis Pocket Linux 2.7.119` are two artifacts of one release rather than
-# two unrelated version lines.
+# The Linux package is not a release of its own: it reuses the product version
+# and the `build-*` GitHub release of the same commit, so one release carries
+# one version and one asset set for macOS, Android and Linux. Users only ever
+# see the single AUR package name `manis-pocket-bin`.
 #
 # The upstream run's head_sha is the source of truth for the checkout, the
 # version and the release target: the Build and Release workflow commits an
@@ -31,16 +32,17 @@ concurrency:
 
 jobs:
   release:
-    name: Publish immutable Arch release
+    name: Attach Linux package to the product release
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'master'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     outputs:
       pkgver: ${{ steps.release.outputs.pkgver }}
       sha256: ${{ steps.release.outputs.sha256 }}
+      release_tag: ${{ steps.release.outputs.release_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -94,36 +96,51 @@ jobs:
             echo "no release tag for version $pkgver on $ARCH_SHA" >&2
             exit 1
           fi
-          asset_name="manis-pocket-wayland-${pkgver}-1-x86_64.pkg.tar.zst"
+          asset_name="manis-pocket-${pkgver}-1-x86_64.pkg.tar.zst"
           gh run download "$ARCH_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
-            --name manis-pocket-wayland-arch-x86_64 \
+            --name manis-pocket-arch-x86_64 \
             --dir dist
           test -f "dist/$asset_name"
           (cd dist && sha256sum --check "$asset_name.sha256")
           digest="$(sha256sum "dist/$asset_name" | cut -d ' ' -f1)"
 
-          release_tag="wayland-${pkgver}"
-          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            remote_digest="$(
-              gh api "repos/$GITHUB_REPOSITORY/releases/tags/$release_tag" \
-                --jq ".assets[] | select(.name == \"$asset_name\") | .digest"
-            )"
+          # Build and Release publishes its release once the macOS and Android
+          # builds pass, which can land after this job starts. Attach to the
+          # published release so the asset URL in the AUR recipe is live.
+          published=false
+          for attempt in $(seq 1 30); do
+            is_draft="$(gh release view "$release_version_tag" \
+              --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || true)"
+            if [[ "$is_draft" == 'false' ]]; then
+              published=true
+              break
+            fi
+            echo "Release $release_version_tag is not published yet (attempt $attempt/30); waiting"
+            sleep 20
+          done
+          if [[ "$published" != true ]]; then
+            echo "release $release_version_tag was not published in time" >&2
+            exit 1
+          fi
+
+          remote_digest="$(
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$release_version_tag" \
+              --jq ".assets[] | select(.name == \"$asset_name\") | .digest"
+          )"
+          if [[ -n "$remote_digest" ]]; then
             if [[ "$remote_digest" != "sha256:$digest" ]]; then
               echo 'existing release asset differs from the verified Arch CI package' >&2
               exit 1
             fi
           else
-            gh release create "$release_tag" \
+            gh release upload "$release_version_tag" \
               "dist/$asset_name" "dist/$asset_name.sha256" \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$ARCH_SHA" \
-              --title "Manis Pocket Linux $pkgver" \
-              --notes "Arch Linux GTK4 clipboard manager and Wayland sync client built and tested from $ARCH_SHA." \
-              --prerelease --latest=false
+              --repo "$GITHUB_REPOSITORY"
           fi
           echo "pkgver=$pkgver" >> "$GITHUB_OUTPUT"
           echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_version_tag" >> "$GITHUB_OUTPUT"
 
   aur:
     name: Publish manis-pocket-bin
@@ -159,11 +176,13 @@ jobs:
           GIT_SSH_COMMAND: ssh -i ~/.ssh/aur -o IdentitiesOnly=yes
           PKGVER: ${{ needs.release.outputs.pkgver }}
           PACKAGE_SHA256: ${{ needs.release.outputs.sha256 }}
+          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
         shell: bash
         run: |
           aur_dir="$RUNNER_TEMP/manis-pocket-bin"
           git clone ssh://aur@aur.archlinux.org/manis-pocket-bin.git "$aur_dir"
-          bash packaging/aur/render-pkgbuild.sh "$PKGVER" "$PACKAGE_SHA256" "$aur_dir"
+          bash packaging/aur/render-pkgbuild.sh \
+            "$PKGVER" "$PACKAGE_SHA256" "$aur_dir" "$RELEASE_TAG"
           docker run --rm \
             --platform linux/amd64 \
             -v "$aur_dir:/aur:ro" \

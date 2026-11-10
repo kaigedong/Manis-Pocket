@@ -24,6 +24,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The container job runs as a different user than the one that created the
+      # checkout, so every later git call needs the workspace whitelisted.
+      - name: Trust the workspace for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       # The Arch package reuses the product version of the release that the
       # Build and Release workflow publishes for this same commit, so Linux and
       # macOS/Android artifacts of one release share a single number. That
@@ -34,8 +39,9 @@ jobs:
         shell: bash
         run: |
           for attempt in $(seq 1 40); do
-            git fetch --tags --force --quiet origin '+refs/tags/*:refs/tags/*' || true
-            tags="$(git tag --points-at HEAD --list 'build-*' 'v*')"
+            git fetch --tags --force --quiet origin '+refs/tags/*:refs/tags/*' \
+              || echo "Tag fetch failed on attempt $attempt/40; retrying"
+            tags="$(git tag --points-at HEAD --list 'build-*' 'v*' || true)"
             if [[ -n "$tags" ]]; then
               echo "Release tag for $(git rev-parse --short=7 HEAD): $(tr '\n' ' ' <<< "$tags")"
               exit 0
@@ -67,10 +73,10 @@ jobs:
             echo "a master build must carry a release version, got '$pkgver'" >&2
             exit 1
           fi
-          package_path="$(find packaging/archlinux -maxdepth 1 -name 'manis-pocket-wayland-[0-9]*.pkg.tar.zst' -print -quit)"
+          package_path="$(find packaging/archlinux -maxdepth 1 -name 'manis-pocket-[0-9]*.pkg.tar.zst' -print -quit)"
           test -n "$package_path"
           case "$(basename "$package_path")" in
-            "manis-pocket-wayland-${pkgver}-1-x86_64.pkg.tar.zst") ;;
+            "manis-pocket-${pkgver}-1-x86_64.pkg.tar.zst") ;;
             *)
               echo "package name does not match pkgver $pkgver" >&2
               exit 1
@@ -86,8 +92,8 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: manis-pocket-wayland-arch-x86_64
+          name: manis-pocket-arch-x86_64
           path: |
-            dist/manis-pocket-wayland-*.pkg.tar.zst
-            dist/manis-pocket-wayland-*.pkg.tar.zst.sha256
+            dist/manis-pocket-*.pkg.tar.zst
+            dist/manis-pocket-*.pkg.tar.zst.sha256
           if-no-files-found: error

@@ -57,7 +57,7 @@ cd android && ./gradlew assembleDebug
 - `master` 每次成功的 **Build and Release** 工作流使用 `2.7.<github.run_number>`，例如 `2.7.153`，创建独立的 `build-2.7.153` 预发布。规则与同目录 Manis 项目的运行序号版本一致；失败或取消的运行会留下编号空缺。
 - 同一工作流重跑保持版本号和标签不变。已发布安装包不覆盖、不删除、不移动标签；尚未发布的草稿可以补齐。
 - 推送 `vX.Y.Z`（三个纯数字组件）标签发布稳定版；PR、开发分支和手动运行只生成构建产物，不发布。
-- Linux 包复用同一次发布的版本号，不再单独编号。`master` 推送时 Arch CI 会等待该提交的 `build-X.Y.Z` 标签，再以同一版本发布为 `wayland-X.Y.Z`，因此 `Manis Pocket 2.7.119` 与 `Manis Pocket Linux 2.7.119` 是同一次发布的两个产物。只有在拿不到发布标签的 PR 或手动构建里才退回 `0.0.0.r<提交数>.g<短哈希>`，这种包不会被发布。`crates/*/Cargo.toml` 里的 `0.1.0` 只是 Rust crate 的内部版本，不参与发布版本号。
+- Linux 包复用同一次发布的版本号和 release，不再单独编号，也不再单开 release。`master` 推送时 Arch CI 会等待该提交的 `build-X.Y.Z` 标签，打成 `manis-pocket` 包后由发布流程挂到同一个 release 的资产里；AUR 侧只有 `manis-pocket-bin` 一个包名，它 repackage 的就是这个资产。只有在拿不到发布标签的 PR 或手动构建里才退回 `0.0.0.r<提交数>.g<短哈希>`，这种包不会被发布。`crates/*/Cargo.toml` 里的 `0.1.0` 只是 Rust crate 的内部版本，不参与发布版本号。
 - macOS 展示版本和 Android `versionName` 共用上述版本，macOS 构建号和 Android `versionCode` 共用工作流运行序号。不要重建或重置该工作流的编号；旧标签指向不同提交时发布会失败。
 - 发布后由 GitHub Actions 提交真实的 `appcast.xml` 或 `appcast-beta.xml` 到 `master`（带 `[skip ci]`，不会循环构建）。更新文件记录真实版本、构建号、安装包大小，并指向固定版本下载地址；较旧运行的重跑不会使更新源降级。该步骤需要 Actions 对 `master` 的写入权限。
 - 不再维护 `latest-beta` 滚动发布。使用旧版应用的用户需手动安装一次新的版本化构建，之后测试版更新从固定的仓库更新源发现新版本。

@@ -11,10 +11,14 @@ On Arch Linux x86_64 with `base-devel` installed:
 ```sh
 cd packaging/archlinux
 makepkg --syncdeps --cleanbuild
-namcap manis-pocket-wayland-[0-9]*.pkg.tar.zst
-sudo pacman -U manis-pocket-wayland-[0-9]*.pkg.tar.zst
+namcap manis-pocket-[0-9]*.pkg.tar.zst
+sudo pacman -U manis-pocket-[0-9]*.pkg.tar.zst
 ```
 
+The package is named after the product, not after the sync helper it also
+ships: both `/usr/bin/manis-pocket` and `/usr/bin/manis-pocket-wayland` come
+from `pkgname=manis-pocket`.
+
 For the AUR binary package, see [../aur](../aur/README.md). It repackages the
-immutable Arch package published by the release workflow. This checkout
-package is intended for CI artifacts and local validation.
+package attached to the product release by the release workflow. This
+checkout package is intended for CI artifacts and local validation.

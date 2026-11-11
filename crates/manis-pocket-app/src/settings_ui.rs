@@ -202,6 +202,27 @@ fn section(title: &'static str, rows: Vec<AnyElement>) -> AnyElement {
         .into_any_element()
 }
 
+/// A small caption that starts a group of related controls.
+fn group_label(text: &'static str) -> AnyElement {
+    v_flex()
+        .w_full()
+        .gap_0p5()
+        .pt_1()
+        .child(
+            div()
+                .text_xs()
+                .text_color(gpui::black().opacity(0.45))
+                .child(text),
+        )
+        .child(
+            div()
+                .w_full()
+                .h(px(1.0))
+                .bg(gpui::black().opacity(0.08)),
+        )
+        .into_any_element()
+}
+
 fn note(text: impl Into<SharedString>) -> AnyElement {
     let text: SharedString = text.into();
     div()
@@ -261,6 +282,7 @@ impl SettingsView {
                 if let Some(probe) = &self.probe {
                     rows.push(Input::new(probe).appearance(false).into_any_element());
                 }
+                rows.push(group_label("搜索"));
                 rows.push(pick_row(
                     "search-mode",
                     "搜索方式",
@@ -274,6 +296,7 @@ impl SettingsView {
                     |settings, value| settings.search_mode = value.to_string(),
                     cx,
                 ));
+                rows.push(group_label("行为"));
                 rows.push(switch_row(
                     "paste-by-default",
                     "选中即粘贴",
@@ -284,6 +307,7 @@ impl SettingsView {
                         cx.notify();
                     }),
                 ));
+                rows.push(group_label("界面"));
                 rows.push(switch_row(
                     "show-footer",
                     "显示底部信息栏",
@@ -296,6 +320,7 @@ impl SettingsView {
                 ));
             }
             Pane::Appearance => {
+                rows.push(group_label("窗口"));
                 rows.push(pick_row(
                     "popup-position",
                     "面板位置",
@@ -324,6 +349,7 @@ impl SettingsView {
                     |settings, value| settings.highlight_match = value.to_string(),
                     cx,
                 ));
+                rows.push(group_label("面板内容"));
                 rows.push(switch_row(
                     "show-search",
                     "显示搜索框",
@@ -364,6 +390,7 @@ impl SettingsView {
                         cx.notify();
                     }),
                 ));
+                rows.push(group_label("菜单栏"));
                 rows.push(switch_row(
                     "show-in-status-bar",
                     "显示菜单栏图标",
@@ -434,6 +461,7 @@ impl SettingsView {
                 rows.push(note("在设置文件中编辑 ignoredApps / ignoreRegexp，每行一条"));
             }
             Pane::Storage => {
+                rows.push(group_label("列表"));
                 rows.push(pick_row(
                     "sort-by",
                     "排序方式",
@@ -446,6 +474,7 @@ impl SettingsView {
                     |settings, value| settings.sort_by = value.to_string(),
                     cx,
                 ));
+                rows.push(group_label("容量"));
                 rows.push(switch_row(
                     "unlimited-history",
                     "无限历史记录",
@@ -491,6 +520,7 @@ impl SettingsView {
                         )
                         .into_any_element(),
                 ));
+                rows.push(group_label("保存内容"));
                 rows.push(switch_row(
                     "save-images",
                     "保存图像",

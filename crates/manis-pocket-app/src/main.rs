@@ -425,6 +425,29 @@ impl ListDelegate for HistoryList {
         // With entries picked by ⌘-click, enter pastes them together in pick
         // order instead of copying the highlighted row.
         if !self.checked.is_empty() {
+            // "选中即粘贴" turns the picked stack into a real paste stack: each
+            // entry is placed on the clipboard and pasted before the next one,
+            // which is what the SwiftUI build does with multi-selection.
+            if self.paste_by_default {
+                let history = self.history.clone();
+                let stack = self.checked.clone();
+                self.checked.clear();
+                _window.remove_window();
+                std::thread::spawn(move || {
+                    for id in stack {
+                        if !copy_entry_to_clipboard(&history, &id) {
+                            continue;
+                        }
+                        // The target app reads the clipboard on paste; a short
+                        // pause keeps the next write from overtaking it.
+                        std::thread::sleep(std::time::Duration::from_millis(80));
+                        crate::clipboard::paste_into_frontmost();
+                        std::thread::sleep(std::time::Duration::from_millis(260));
+                    }
+                });
+                return;
+            }
+
             let mut parts: Vec<String> = Vec::new();
             for id in self.checked.clone() {
                 let Ok(contents) = self.history.contents(id) else {

@@ -5,7 +5,7 @@ edition.workspace = true
 version = "0.1.0"
 
 [lib]
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 name = "manis_pocket_core"
 
 [dependencies]
@@ -21,6 +21,7 @@ regex = "1"
 log = "0.4"
 manis-pocket-sync = { path = "../manis-pocket-sync" }
 base64 = "0.22"
+sha2 = "0.11"
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 libp2p = { version = "0.56", features = ["ed25519"] }
 

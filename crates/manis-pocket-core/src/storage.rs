@@ -164,6 +164,35 @@ impl Storage {
                 .map_err(|e| CoreError::Storage { msg: e.to_string() })?;
         }
 
+        if current_version < 6 {
+            // Content fingerprints: duplicating a copy used to require loading
+            // every stored payload (16 MiB+ on a mature history). The index lets
+            // `add()` find the existing entry by (type, sha256(value)) instead.
+            self.conn
+                .execute_batch(
+                    "CREATE TABLE IF NOT EXISTS item_content_hashes (
+                        item_id TEXT NOT NULL,
+                        content_type TEXT NOT NULL,
+                        value_hash TEXT NOT NULL,
+                        PRIMARY KEY (item_id, content_type, value_hash)
+                     );
+                     CREATE INDEX IF NOT EXISTS idx_content_hash
+                        ON item_content_hashes(content_type, value_hash);
+                     INSERT INTO schema_version (version) VALUES (6);",
+                )
+                .map_err(|e| CoreError::Storage { msg: e.to_string() })?;
+            self.rebuild_content_hashes()?;
+        }
+
+        if current_version < 7 {
+            // Fingerprints now normalise plain-text spellings, so entries stored
+            // locally and the same text arriving over sync compare equal.
+            self.conn
+                .execute("INSERT INTO schema_version (version) VALUES (7)", [])
+                .map_err(|e| CoreError::Storage { msg: e.to_string() })?;
+            self.rebuild_content_hashes()?;
+        }
+
         Ok(())
     }
 
@@ -281,11 +310,26 @@ impl Storage {
                 params![item.id, content.content_type, content.value.as_deref()],
             )?;
         }
+        self.record_content_hashes(&item.id, &item.contents)?;
 
         Ok(())
     }
 
     pub fn get_all_items(&self) -> Result<Vec<ClipboardItem>, CoreError> {
+        let mut items = self.get_all_metadata()?;
+        for item in &mut items {
+            item.contents = self.get_contents_for_item(&item.id)?;
+        }
+        Ok(items)
+    }
+
+    /// Every visible item **without** its payloads.
+    ///
+    /// A history list needs titles, timestamps and source apps for thousands of
+    /// rows, but payloads only for the handful it renders or copies. Loading
+    /// them all would pull hundreds of megabytes of BLOBs into memory, so this
+    /// is the query UIs should use for the list.
+    pub fn get_all_metadata(&self) -> Result<Vec<ClipboardItem>, CoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, application, first_copied_at, last_copied_at, number_of_copies, pin, title, sync_timestamp, sync_source, sync_deleted
              FROM history_items WHERE sync_deleted = 0
@@ -293,31 +337,14 @@ impl Storage {
         )?;
 
         let items = stmt
-            .query_map([], |row| {
-                Ok(ClipboardItem {
-                    id: row.get(0)?,
-                    application: row.get(1)?,
-                    first_copied_at: row.get(2)?,
-                    last_copied_at: row.get(3)?,
-                    number_of_copies: row.get(4)?,
-                    pin: row.get(5)?,
-                    title: row.get(6)?,
-                    contents: vec![], // populated below
-                    sync_timestamp: row.get(7)?,
-                    sync_source: row.get(8)?,
-                    sync_deleted: row.get::<_, i32>(9)? != 0,
-                })
-            })?
+            .query_map([], item_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
+        Ok(items)
+    }
 
-        // Populate contents for each item
-        let mut result = Vec::with_capacity(items.len());
-        for mut item in items {
-            item.contents = self.get_contents_for_item(&item.id)?;
-            result.push(item);
-        }
-
-        Ok(result)
+    /// Payloads of one item, fetched on demand by the UI.
+    pub fn get_contents(&self, item_id: &str) -> Result<Vec<ClipboardContent>, CoreError> {
+        self.get_contents_for_item(item_id)
     }
 
     pub fn get_item(&self, id: &str) -> Result<Option<ClipboardItem>, CoreError> {
@@ -375,6 +402,8 @@ impl Storage {
             params![id],
         )?;
         self.conn
+            .execute("DELETE FROM item_content_hashes WHERE item_id = ?1", params![id])?;
+        self.conn
             .execute("DELETE FROM history_items WHERE id = ?1", params![id])?;
         if rows == 0 {
             // contents deleted, check item
@@ -424,14 +453,104 @@ impl Storage {
             "DELETE FROM history_contents WHERE item_id = ?1",
             params![item.id],
         )?;
+        self.conn.execute(
+            "DELETE FROM item_content_hashes WHERE item_id = ?1",
+            params![item.id],
+        )?;
         for content in &item.contents {
             self.conn.execute(
                 "INSERT INTO history_contents (item_id, content_type, value) VALUES (?1, ?2, ?3)",
                 params![item.id, content.content_type, content.value.as_deref()],
             )?;
         }
+        self.record_content_hashes(&item.id, &item.contents)?;
 
         Ok(())
+    }
+
+    /// Store the (type, hash) fingerprint for each content of an item.
+    fn record_content_hashes(
+        &self,
+        item_id: &str,
+        contents: &[ClipboardContent],
+    ) -> Result<(), CoreError> {
+        for content in contents {
+            self.conn.execute(
+                "INSERT OR IGNORE INTO item_content_hashes (item_id, content_type, value_hash)
+                 VALUES (?1, ?2, ?3)",
+                params![item_id, fingerprint_type(&content.content_type), content_hash(content)],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Backfill fingerprints for databases created before they existed.
+    fn rebuild_content_hashes(&self) -> Result<(), CoreError> {
+        self.conn
+            .execute("DELETE FROM item_content_hashes", [])
+            .map_err(|e| CoreError::Storage { msg: e.to_string() })?;
+        let items = self.get_all_items()?;
+        for item in &items {
+            self.record_content_hashes(&item.id, &item.contents)?;
+        }
+        Ok(())
+    }
+
+    /// Find an existing item that already contains **all** of `contents`.
+    ///
+    /// Candidates come from the fingerprint index on the first content, so the
+    /// only payload read is the handful of entries sharing that fingerprint.
+    pub fn find_by_contents(
+        &self,
+        contents: &[&ClipboardContent],
+    ) -> Result<Option<ClipboardItem>, CoreError> {
+        let Some(first) = contents.first() else {
+            return Ok(None);
+        };
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT h.item_id
+             FROM item_content_hashes h
+             JOIN history_items i ON i.id = h.item_id
+             WHERE h.content_type = ?1 AND h.value_hash = ?2 AND i.sync_deleted = 0",
+        )?;
+        let candidates = stmt
+            .query_map(
+                params![fingerprint_type(&first.content_type), content_hash(first)],
+                |row| row.get::<_, String>(0),
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for id in candidates {
+            let Some(existing) = self.get_item(&id)? else {
+                continue;
+            };
+            let covers_all = contents.iter().all(|wanted| {
+                existing.contents.iter().any(|stored| {
+                    fingerprint_type(&stored.content_type)
+                        == fingerprint_type(&wanted.content_type)
+                        && stored.value == wanted.value
+                })
+            });
+            if covers_all {
+                return Ok(Some(existing));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Ids of the oldest unpinned entries, for trimming to the configured size
+    /// without loading the whole history.
+    pub fn oldest_unpinned_ids(&self, limit: usize) -> Result<Vec<String>, CoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM history_items
+             WHERE pin IS NULL AND sync_deleted = 0
+             ORDER BY last_copied_at ASC
+             LIMIT ?1",
+        )?;
+        let ids = stmt
+            .query_map(params![limit as i64], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ids)
     }
 
     pub fn count_items(&self) -> Result<i64, CoreError> {
@@ -569,4 +688,51 @@ impl Storage {
 
         Ok(count)
     }
+}
+
+/// Maps a `history_items` row onto `ClipboardItem` without contents.
+fn item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardItem> {
+    Ok(ClipboardItem {
+        id: row.get(0)?,
+        application: row.get(1)?,
+        first_copied_at: row.get(2)?,
+        last_copied_at: row.get(3)?,
+        number_of_copies: row.get(4)?,
+        pin: row.get(5)?,
+        title: row.get(6)?,
+        contents: Vec::new(),
+        sync_timestamp: row.get(7)?,
+        sync_source: row.get(8)?,
+        sync_deleted: row.get::<_, i32>(9)? != 0,
+    })
+}
+
+/// Content types that all mean "plain text".
+///
+/// macOS says `public.utf8-plain-text`, the sync wire format says
+/// `text/plain;charset=utf-8`, and Linux tools say `text/plain`. Deduplication
+/// has to see them as the same payload or a synced copy of something already in
+/// the history becomes a second entry.
+fn fingerprint_type(content_type: &str) -> &str {
+    match content_type {
+        "public.utf8-plain-text" | "text/plain" | "text/plain;charset=utf-8" => "text/plain",
+        other => other,
+    }
+}
+
+/// Stable fingerprint of one clipboard payload.
+fn content_hash(content: &ClipboardContent) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(fingerprint_type(&content.content_type).as_bytes());
+    hasher.update([0u8]);
+    if let Some(value) = &content.value {
+        hasher.update(value);
+    }
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }

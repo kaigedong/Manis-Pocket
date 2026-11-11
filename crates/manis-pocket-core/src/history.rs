@@ -44,12 +44,31 @@ impl HistoryManager {
 
     // ── Persistence ───────────────────────────────────────────────
 
-    /// Load all items from storage.
+    /// Load all items from storage, payloads included.
     pub fn load(&self) -> Result<Vec<ClipboardItem>, CoreError> {
         self.storage
             .lock()
             .map_err(|e| CoreError::Storage { msg: e.to_string() })?
             .get_all_items()
+    }
+
+    /// Load every item without payloads.
+    ///
+    /// UIs list the whole history but only need payloads for what they render
+    /// or copy, so this keeps startup independent of how much content is stored.
+    pub fn load_metadata(&self) -> Result<Vec<ClipboardItem>, CoreError> {
+        self.storage
+            .lock()
+            .map_err(|e| CoreError::Storage { msg: e.to_string() })?
+            .get_all_metadata()
+    }
+
+    /// Fetch one item's payloads on demand.
+    pub fn contents(&self, id: String) -> Result<Vec<ClipboardContent>, CoreError> {
+        self.storage
+            .lock()
+            .map_err(|e| CoreError::Storage { msg: e.to_string() })?
+            .get_contents(&id)
     }
 
     /// Add a new clipboard item. Handles deduplication and size limiting.
@@ -71,8 +90,19 @@ impl HistoryManager {
             .lock()
             .map_err(|e| CoreError::Storage { msg: e.to_string() })?;
 
-        let existing_items = storage.get_all_items()?;
-        if let Some(similar) = find_similar(&item, &existing_items) {
+        // Deduplication goes through the content fingerprint index: only
+        // entries sharing a payload are loaded, never the whole history.
+        let shareable: Vec<&ClipboardContent> = item
+            .contents
+            .iter()
+            .filter(|content| !is_transient(&content.content_type))
+            .collect();
+        let similar = if shareable.is_empty() {
+            None
+        } else {
+            storage.find_by_contents(&shareable)?
+        };
+        if let Some(similar) = similar {
             let mut updated = similar.clone();
             updated.last_copied_at = item.last_copied_at;
             updated.number_of_copies += 1;
@@ -101,12 +131,9 @@ impl HistoryManager {
         if !is_unlimited && max_size > 0 {
             let count = storage.count_items()?;
             if count >= max_size as i64 {
-                let all = storage.get_all_items()?;
-                let unpinned: Vec<&ClipboardItem> =
-                    all.iter().filter(|i| i.pin.is_none()).collect();
                 let excess = (count - max_size as i64 + 1) as usize;
-                for item in unpinned.iter().rev().take(excess) {
-                    storage.delete_item(&item.id)?;
+                for id in storage.oldest_unpinned_ids(excess)? {
+                    storage.delete_item(&id)?;
                 }
             }
         }
@@ -470,37 +497,21 @@ impl HistoryManager {
 
 // ── Deduplication ─────────────────────────────────────────────────
 
-fn find_similar<'a>(
-    new_item: &ClipboardItem,
-    existing: &'a [ClipboardItem],
-) -> Option<&'a ClipboardItem> {
-    let transient_types = [
-        "com.apple.modified",
-        "com.manispocket.from-manispocket",
-        "com.apple.linkpresentation.metadata",
-        "com.apple.custom-webkit-pasteboard-data",
-        "com.apple.pasteboard.promised-file-url",
-        "org.chromium.source-url",
-        "org.chromium.source-web-custom-data",
-        "com.apple.NSItemProvider.Providers",
-    ];
-
-    existing.iter().find(|existing| {
-        let new_non_transient: Vec<&ClipboardContent> = new_item
-            .contents
-            .iter()
-            .filter(|c| !transient_types.contains(&c.content_type.as_str()))
-            .collect();
-        if new_non_transient.is_empty() {
-            return false;
-        }
-        new_non_transient.iter().all(|new_content| {
-            existing.contents.iter().any(|existing_content| {
-                existing_content.content_type == new_content.content_type
-                    && existing_content.value == new_content.value
-            })
-        })
-    })
+/// Pasteboard types that change on every copy without changing what the user
+/// actually copied (browser metadata, our own marker, ...). They must not
+/// defeat deduplication.
+fn is_transient(content_type: &str) -> bool {
+    matches!(
+        content_type,
+        "com.apple.modified"
+            | "com.manispocket.from-manispocket"
+            | "com.apple.linkpresentation.metadata"
+            | "com.apple.custom-webkit-pasteboard-data"
+            | "com.apple.pasteboard.promised-file-url"
+            | "org.chromium.source-url"
+            | "org.chromium.source-web-custom-data"
+            | "com.apple.NSItemProvider.Providers"
+    )
 }
 
 #[cfg(test)]
@@ -539,6 +550,110 @@ mod tests {
         )
         .unwrap();
         assert_eq!(mgr.load().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn dedup_ignores_transient_types_and_requires_all_contents() {
+        let mgr = HistoryManager::new(":memory:".to_string()).unwrap();
+        mgr.add(
+            make_item("a", "Hello", &[("public.utf8-plain-text", b"Hello")]),
+            1000,
+            false,
+        )
+        .unwrap();
+
+        // A transient marker alone must not defeat deduplication.
+        let mut with_marker = make_item(
+            "b",
+            "Hello",
+            &[
+                ("public.utf8-plain-text", b"Hello"),
+                ("com.apple.modified", b"123"),
+            ],
+        );
+        with_marker.last_copied_at = 2000;
+        let merged = mgr.add(with_marker, 1000, false).unwrap();
+        assert_eq!(merged.id, "a");
+        assert_eq!(merged.number_of_copies, 2);
+        assert_eq!(mgr.load_metadata().unwrap().len(), 1);
+
+        // An extra non-transient payload is a different item.
+        let with_image = make_item(
+            "c",
+            "Hello",
+            &[
+                ("public.utf8-plain-text", b"Hello"),
+                ("public.png", b"\x89PNG"),
+            ],
+        );
+        let added = mgr.add(with_image, 1000, false).unwrap();
+        assert_eq!(added.id, "c");
+        assert_eq!(mgr.load_metadata().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn text_from_a_peer_merges_with_the_same_local_text() {
+        let mgr = HistoryManager::new(":memory:".to_string()).unwrap();
+        // Captured locally on macOS.
+        mgr.add(
+            make_item("local", "hi", &[("public.utf8-plain-text", b"hi")]),
+            1000,
+            false,
+        )
+        .unwrap();
+
+        // The same text arriving from a peer, spelled the way the wire does.
+        let mut from_peer = make_item("peer", "", &[("text/plain;charset=utf-8", b"hi")]);
+        from_peer.sync_source = Some("12D3KooPeer".into());
+        let merged = mgr.add(from_peer, 1000, false).unwrap();
+
+        assert_eq!(merged.id, "local", "peer copy should merge, not duplicate");
+        assert_eq!(merged.number_of_copies, 2);
+        assert_eq!(mgr.load_metadata().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn trimming_drops_only_the_oldest_unpinned_entries() {
+        let mgr = HistoryManager::new(":memory:".to_string()).unwrap();
+        for (index, text) in ["one", "two", "three"].iter().enumerate() {
+            let mut item = make_item(text, text, &[("public.utf8-plain-text", text.as_bytes())]);
+            item.last_copied_at = 1000 + index as i64;
+            mgr.add(item, 2, false).unwrap();
+        }
+        let titles: Vec<String> = mgr
+            .load_metadata()
+            .unwrap()
+            .into_iter()
+            .map(|item| item.title)
+            .collect();
+        assert_eq!(titles, vec!["three".to_string(), "two".to_string()]);
+    }
+
+    #[test]
+    fn metadata_load_skips_payloads_and_contents_load_on_demand() {
+        let mgr = HistoryManager::new(":memory:".to_string()).unwrap();
+        mgr.add(
+            make_item("1", "Hello", &[("public.utf8-plain-text", b"Hello")]),
+            1000,
+            false,
+        )
+        .unwrap();
+        let blob = vec![7u8; 4096];
+        mgr.add(make_item("2", "Blob", &[("public.png", &blob)]), 1000, false)
+            .unwrap();
+
+        let metadata = mgr.load_metadata().unwrap();
+        assert_eq!(metadata.len(), 2);
+        assert!(
+            metadata.iter().all(|item| item.contents.is_empty()),
+            "metadata must not carry payloads"
+        );
+        // Listing and search only need titles, which metadata still provides.
+        assert!(metadata.iter().any(|item| item.title == "Blob"));
+
+        let contents = mgr.contents("2".to_string()).unwrap();
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0].value.as_deref(), Some(blob.as_slice()));
     }
 
     #[test]
@@ -603,3 +718,4 @@ mod tests {
         assert!(mgr.load().unwrap().len() <= 3);
     }
 }
+

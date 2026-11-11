@@ -54,7 +54,7 @@ const HEADER_HEIGHT: f32 = 44.0;
 const FOOTER_HEIGHT: f32 = 122.0;
 
 /// Character budget standing in for `truncationMode(.middle)`.
-const TITLE_BUDGET: usize = 34;
+const TITLE_BUDGET: usize = 28;
 /// Row width inside the card: panel width minus the list's horizontal padding.
 const ROW_WIDTH: f32 = 420.0;
 /// Space the title may use before the shortcut hint starts.
@@ -138,7 +138,8 @@ impl ListDelegate for HistoryList {
         };
 
         let mut row = h_flex()
-            .w(px(ROW_WIDTH))
+            .flex_1()
+            .min_w(px(0.0))
             .min_h(px(ROW_MIN_HEIGHT))
             .text_size(px(13.0))
             .text_color(foreground);
@@ -253,11 +254,85 @@ impl ListDelegate for HistoryList {
         let click_history = self.history.clone();
         let hover_id = item.id.clone();
 
+        // Trailing slot: the copy and delete buttons while hovered, otherwise the
+        // ⌘N hint the SwiftUI build shows.
+        let hovering = self.hovered.as_deref() == Some(item.id.as_str());
+        let trailing = if hovering {
+            let copy_id = item.id.clone();
+            let copy_history = self.history.clone();
+            let delete_id = item.id.clone();
+            let delete_history = self.history.clone();
+            h_flex()
+                .gap_1()
+                .flex_shrink_0()
+                .child(
+                    div()
+                        .id(SharedString::from(format!("copy-{}", item.id)))
+                        .px_1()
+                        .rounded(px(3.0))
+                        .hover(|style| style.bg(gpui::black().opacity(0.08)))
+                        .cursor_pointer()
+                        .text_color(if selected {
+                            gpui::white()
+                        } else {
+                            gpui::black().opacity(0.55)
+                        })
+                        .child("复制")
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            if copy_entry_to_clipboard(&copy_history, &copy_id) {
+                                cx.notify();
+                            }
+                        })),
+                )
+                .child(
+                    div()
+                        .id(SharedString::from(format!("delete-{}", item.id)))
+                        .px_1()
+                        .rounded(px(3.0))
+                        .hover(|style| style.bg(gpui::black().opacity(0.08)))
+                        .cursor_pointer()
+                        .text_color(if selected {
+                            gpui::white()
+                        } else {
+                            gpui::black().opacity(0.55)
+                        })
+                        .child("删除")
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            let _ = delete_history.delete(delete_id.clone());
+                            cx.notify();
+                        })),
+                )
+                .into_any_element()
+        } else if let Some(pin) = item.pin.clone() {
+            div()
+                .flex_shrink_0()
+                .text_size(px(10.0))
+                .text_color(if selected {
+                    gpui::white().opacity(0.75)
+                } else {
+                    gpui::black().opacity(0.35)
+                })
+                .child(SharedString::from(pin))
+                .into_any_element()
+        } else {
+            div()
+                .flex_shrink_0()
+                .text_size(px(10.0))
+                .text_color(if selected {
+                    gpui::white().opacity(0.6)
+                } else {
+                    gpui::black().opacity(0.3)
+                })
+                .child(SharedString::from(format!("⌘{}", ix.row + 1)))
+                .into_any_element()
+        };
+
         Some(
             ListItem::new(("row", ix.row))
+                .w_full()
                 .rounded(px(ROW_CORNER))
                 .bg(gpui::rgb(SELECTION_ACCENT).opacity(if selected { 0.8 } else { 0.0 }))
-                .child(div().w_full().child(row))
+                .child(h_flex().w_full().justify_between().child(row).child(trailing))
                 .on_hover(cx.listener(
                     move |state: &mut ListState<HistoryList>,
                           hovered: &bool,

@@ -1646,8 +1646,9 @@ fn main() {
         // The tray only reports intent; the window handling stays here.
         let (tray_tx, mut tray_rx) = futures::channel::mpsc::unbounded();
         // `showInStatusBar == false` means the app lives only behind its shortcut.
-        if settings::Settings::load(&storage_path()).show_in_status_bar {
-            tray::install(tray_tx);
+        let tray_settings = settings::Settings::load(&storage_path());
+        if tray_settings.show_in_status_bar {
+            tray::install(tray_tx, &tray_settings.menu_icon);
         }
 
         // A second launch asks this instance to toggle instead of starting up.

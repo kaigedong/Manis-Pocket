@@ -423,6 +423,19 @@ impl SettingsView {
                     }),
                 ));
                 rows.push(group_label("菜单栏"));
+                rows.push(pick_row(
+                    "menu-icon",
+                    "图标",
+                    &[
+                        ("manispocket", "剪贴板"),
+                        ("clipboard", "剪贴夹"),
+                        ("scissors", "剪刀"),
+                        ("paperclip", "回形针"),
+                    ],
+                    &self.settings.menu_icon,
+                    |settings, value| settings.menu_icon = value.to_string(),
+                    cx,
+                ));
                 rows.push(switch_row(
                     "show-in-status-bar",
                     "显示菜单栏图标",

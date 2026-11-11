@@ -20,14 +20,15 @@ pub enum TrayCommand {
 
 /// Creates the status item and reports whether one exists. The tray lives for
 /// the whole process, so it deliberately leaks its platform handle.
-pub fn install(tx: UnboundedSender<TrayCommand>) -> bool {
+pub fn install(tx: UnboundedSender<TrayCommand>, menu_icon: &str) -> bool {
     #[cfg(target_os = "macos")]
     {
-        macos::install(tx)
+        macos::install(tx, menu_icon)
     }
 
     #[cfg(target_os = "linux")]
     {
+        let _ = menu_icon;
         linux::install(tx)
     }
 
@@ -44,7 +45,7 @@ mod macos {
     use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
     use tray_icon::{Icon, TrayIconBuilder};
 
-    pub fn install(tx: UnboundedSender<TrayCommand>) -> bool {
+    pub fn install(tx: UnboundedSender<TrayCommand>, menu_icon: &str) -> bool {
         let menu = Menu::new();
         let open_item = MenuItem::new("打开 Manis Pocket", true, None);
         let settings_item = MenuItem::new("设置…", true, None);
@@ -57,7 +58,7 @@ mod macos {
             return false;
         }
 
-        let Some(icon) = load_icon() else {
+        let Some(icon) = load_icon(menu_icon) else {
             return false;
         };
 
@@ -98,10 +99,15 @@ mod macos {
         true
     }
 
-    fn load_icon() -> Option<Icon> {
-        let image = image::load_from_memory(include_bytes!("../assets/tray-icon.png"))
-            .ok()?
-            .to_rgba8();
+    /// The menu-bar glyph for the `menuIcon` setting.
+    fn load_icon(variant: &str) -> Option<Icon> {
+        let bytes: &[u8] = match variant {
+            "clipboard" => include_bytes!("../assets/tray/tray-clipboard.png"),
+            "scissors" => include_bytes!("../assets/tray/tray-scissors.png"),
+            "paperclip" => include_bytes!("../assets/tray/tray-paperclip.png"),
+            _ => include_bytes!("../assets/tray/tray-manispocket.png"),
+        };
+        let image = image::load_from_memory(bytes).ok()?.to_rgba8();
         let (width, height) = image.dimensions();
         Icon::from_rgba(image.into_raw(), width, height).ok()
     }
@@ -178,6 +184,27 @@ mod linux {
                 true
             }
             Err(_) => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// The four menu-bar glyphs are committed PNGs, so a rename or a bad export
+    /// would only show up as a missing tray icon at runtime.
+    #[test]
+    fn every_tray_icon_decodes() {
+        let icons: [&[u8]; 4] = [
+            include_bytes!("../assets/tray/tray-manispocket.png"),
+            include_bytes!("../assets/tray/tray-clipboard.png"),
+            include_bytes!("../assets/tray/tray-scissors.png"),
+            include_bytes!("../assets/tray/tray-paperclip.png"),
+        ];
+        for bytes in icons {
+            let image = image::load_from_memory(bytes)
+                .expect("tray icon decodes")
+                .to_rgba8();
+            assert!(image.width() >= 16 && image.height() >= 16);
         }
     }
 }

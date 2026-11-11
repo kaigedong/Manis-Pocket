@@ -1564,6 +1564,41 @@ fn main() {
     // and it exercises the same path the panel uses.
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
+        // Copies several entries in the given order, joined by newlines: the same
+        // work the panel's paste stack does, and the only form of it that can be
+        // checked without a window.
+        if arg == "--copy-stack" {
+            if let Some(ids) = args.next() {
+                let history = HistoryManager::new(storage_path()).ok();
+                let mut parts: Vec<String> = Vec::new();
+                if let Some(history) = history {
+                    for id in ids.split(',').map(str::trim).filter(|id| !id.is_empty()) {
+                        let Ok(contents) = history.contents(id.to_string()) else {
+                            continue;
+                        };
+                        if let Some(text) = contents
+                            .iter()
+                            .find(|content| {
+                                matches!(
+                                    content.content_type.as_str(),
+                                    "public.utf8-plain-text"
+                                        | "text/plain"
+                                        | "text/plain;charset=utf-8"
+                                )
+                            })
+                            .and_then(|content| content.value.as_ref())
+                            .map(|value| String::from_utf8_lossy(value).to_string())
+                        {
+                            parts.push(text);
+                        }
+                    }
+                }
+                let ok = !parts.is_empty() && crate::clipboard::write_text(&parts.join("\n"));
+                println!("{ok}");
+                return;
+            }
+        }
+
         if arg == "--copy" {
             if let Some(id) = args.next() {
                 let ok = HistoryManager::new(storage_path())

@@ -307,6 +307,38 @@ impl SettingsView {
                         cx.notify();
                     }),
                 ));
+                // Auto-paste silently does nothing without the permission, so say
+                // so and offer the shortcut to grant it.
+                if self.settings.paste_by_default && !crate::clipboard::paste_permission() {
+                    rows.push(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .py_1()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(gpui::rgb(0xB4_5F06))
+                                    .child("自动粘贴需要辅助功能权限"),
+                            )
+                            .child(
+                                div()
+                                    .id("grant-paste-permission")
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded(px(4.0))
+                                    .bg(gpui::rgb(0x0A84FF))
+                                    .text_color(gpui::white())
+                                    .text_xs()
+                                    .cursor_pointer()
+                                    .child("去授权")
+                                    .on_click(cx.listener(|_, _, _, _cx| {
+                                        crate::clipboard::open_paste_permission_settings();
+                                    })),
+                            )
+                            .into_any_element(),
+                    );
+                }
                 rows.push(group_label("界面"));
                 rows.push(switch_row(
                     "show-footer",

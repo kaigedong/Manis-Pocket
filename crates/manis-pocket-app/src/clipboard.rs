@@ -267,6 +267,45 @@ pub fn apply_remote(content: &manis_pocket_core::model::ClipboardContent) -> boo
     }
 }
 
+/// Whether the platform will let us send the paste shortcut.
+///
+/// Without this the auto-paste setting looks enabled but does nothing, which is
+/// the worst possible outcome: the user cannot tell a missing permission from a
+/// bug.
+pub fn paste_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        #[link(name = "ApplicationServices", kind = "framework")]
+        unsafe extern "C" {
+            fn AXIsProcessTrusted() -> bool;
+        }
+        unsafe { AXIsProcessTrusted() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        std::process::Command::new("sh")
+            .args(["-c", "command -v wtype"])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+}
+
+/// Opens the system pane where the permission is granted.
+pub fn open_paste_permission_settings() -> bool {
+    #[cfg(target_os = "macos")]
+    let target =
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+    #[cfg(not(target_os = "macos"))]
+    let target = "accessibility";
+
+    std::process::Command::new("open")
+        .arg(target)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 /// Puts plain text on the system clipboard.
 pub fn write_text(text: &str) -> bool {
     #[cfg(target_os = "macos")]

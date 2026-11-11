@@ -52,6 +52,8 @@ pub struct NetworkManager {
     pending_persist: bool,
     /// When each peer was last dialed, so reconnects back off instead of racing.
     last_dial: HashMap<PeerId, Instant>,
+    /// Pairings we finished but keep re-announcing for a few seconds.
+    recent_confirms: Vec<(PeerId, String, Instant)>,
     listen_port: u16,
     local_peer_id: PeerId,
     /// IP:port strings of our own listen addresses (collected from NewListenAddr).
@@ -127,6 +129,11 @@ impl NetworkManager {
 
         let gossipsub_config = gossipsub::ConfigBuilder::default()
             .heartbeat_interval(Duration::from_secs(1))
+            // Pairing is a handful of tiny messages exchanged right after two
+            // peers meet, before a mesh exists. Gossip would wait for the mesh
+            // and silently drop them, which made pairing fail intermittently;
+            // flooding delivers to every connected subscriber immediately.
+            .flood_publish(true)
             .validation_mode(gossipsub::ValidationMode::Strict)
             .message_id_fn(|msg: &gossipsub::Message| {
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -207,6 +214,7 @@ impl NetworkManager {
             clipboard_ready: true,
             pending_persist: false,
             last_dial: HashMap::new(),
+            recent_confirms: Vec::new(),
             clipboard_store,
             listen_port,
             local_peer_id,
@@ -604,10 +612,19 @@ impl NetworkManager {
                 target_peer_id,
                 device_name,
             } => {
-                if target_peer_id != self.local_peer_id.to_string()
-                    || peer == self.local_peer_id
-                    || self.paired_peers.contains(&peer)
-                {
+                if target_peer_id != self.local_peer_id.to_string() || peer == self.local_peer_id {
+                    return;
+                }
+                if self.paired_peers.contains(&peer) {
+                    // Already paired. The other side may have missed our confirm,
+                    // so answer again: pairing is retried and must be idempotent,
+                    // otherwise a dropped confirm leaves the peer unable to pair
+                    // until the app restarts.
+                    log::info!("Re-confirming an existing pairing with {peer}");
+                    self.publish_pairing_message(PairingMessage::Confirm {
+                        session_id,
+                        target_peer_id: peer.to_string(),
+                    });
                     return;
                 }
                 if self
@@ -677,8 +694,17 @@ impl NetworkManager {
             .get(&peer)
             .is_some_and(|pending| pending.local_confirmed && pending.remote_confirmed)
         {
+            let session_id = self
+                .pending_pairings
+                .get(&peer)
+                .map(|pending| pending.session_id.clone())
+                .unwrap_or_default();
             self.pending_pairings.remove(&peer);
             self.paired_peers.insert(peer);
+            // Keep confirming for a while: the peer may have missed the message
+            // that completed our side, and without a repeat it waits forever.
+            self.recent_confirms
+                .push((peer, session_id, Instant::now()));
             self.state_emit(SyncEvent::PairingComplete {
                 peer_id: peer.to_string(),
                 success: true,
@@ -942,6 +968,40 @@ impl NetworkManager {
     }
 
     fn reconcile_all(&mut self) {
+        // Pairing confirms travel over gossip, which can drop while the mesh is
+        // still forming. Keep re-announcing our side until the peer answers or
+        // the handshake times out; duplicates are ignored by the receiver.
+        let mut republish: Vec<(PeerId, String)> = Vec::new();
+        for (peer, pending) in &self.pending_pairings {
+            if pending.local_confirmed
+                && !pending.remote_confirmed
+                && pending.created_at.elapsed() <= PAIRING_TIMEOUT
+            {
+                republish.push((*peer, pending.session_id.clone()));
+            }
+        }
+        for (peer, session_id) in republish {
+            log::debug!("re-sending pairing confirm to {peer}");
+            self.publish_pairing_message(PairingMessage::Confirm {
+                session_id,
+                target_peer_id: peer.to_string(),
+            });
+        }
+
+        // A completed pairing keeps announcing itself briefly, so a peer that
+        // missed the confirming message can still finish its side.
+        let mut keep: Vec<(PeerId, String, Instant)> = Vec::new();
+        for (peer, session_id, at) in std::mem::take(&mut self.recent_confirms) {
+            if at.elapsed() <= Duration::from_secs(10) {
+                self.publish_pairing_message(PairingMessage::Confirm {
+                    session_id: session_id.clone(),
+                    target_peer_id: peer.to_string(),
+                });
+                keep.push((peer, session_id, at));
+            }
+        }
+        self.recent_confirms = keep;
+
         if self.pending_persist || !self.clipboard_ready {
             if !self.persist_clipboard(&self.clipboard) {
                 return;

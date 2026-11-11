@@ -43,7 +43,17 @@ fn history() -> Arc<HistoryManager> {
 }
 
 /// Row metrics from the macOS build (`Popup.itemHeight`, `Popup.cornerRadius`).
-const ROW_MIN_HEIGHT: f32 = 22.0;
+/// Content height of one row. `ListItem` adds 4 px of padding above and below;
+/// the 13 px text then makes one row about 28 px tall. The SwiftUI build fits a
+/// 22 px row because SwiftUI's default leading is tighter than GPUI's, and GPUI
+/// exposes no line-height setter, so the pitch stays a little looser.
+const ROW_MIN_HEIGHT: f32 = 20.0;
+/// What one row actually occupies, used for the window's height.
+const ROW_PITCH: f32 = 30.0;
+/// Height of the application filter bar.
+const APP_FILTER_HEIGHT: f32 = 28.0;
+/// Height of the status line under the footer.
+const STATUS_HEIGHT: f32 = 30.0;
 const ROW_CORNER: f32 = 4.0;
 const ICON_SIZE: f32 = 15.0;
 /// Selection is the system accent at 80% (`ListItemView.swift:115`); GPUI has no
@@ -991,7 +1001,13 @@ impl HistoryPanel {
         } else {
             0.0
         };
-        let content = rows * ROW_MIN_HEIGHT + HEADER_HEIGHT + footer;
+        // Everything that is not the list: search row, filter bar, footer and the
+        // status line. Under-counting these clipped the last row.
+        let chrome = HEADER_HEIGHT
+            + if self.source_apps().len() >= 2 { APP_FILTER_HEIGHT } else { 0.0 }
+            + footer
+            + if self.settings.show_footer { STATUS_HEIGHT } else { 0.0 };
+        let content = rows * ROW_PITCH + chrome;
         let min_height = HEADER_HEIGHT + 5.0;
         let max_height = self.settings.window_height.max(min_height as f64) as f32;
         let height = content.clamp(min_height, max_height);

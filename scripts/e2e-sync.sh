@@ -112,8 +112,20 @@ for _ in $(seq 1 20); do
 done
 [ -n "$FOUND" ] || fail "linux never received '$MARK'"
 
+say "copy on linux, expect it on mac"
+BACK="back-$(date +%s)"
+ssh "$LINUX_HOST" "printf '%s' '$BACK' | env XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-1 wl-copy"
+BACK_FOUND=""
+for _ in $(seq 1 20); do
+  BACK_FOUND=$(sqlite3 "$MAC_DB" "select title from history_items where title='$BACK' limit 1;" 2>/dev/null)
+  [ -n "$BACK_FOUND" ] && break
+  sleep 1
+done
+[ -n "$BACK_FOUND" ] || fail "mac never received '$BACK'"
+
 say "PASS"
 echo "linux received: $FOUND"
+echo "mac received:   $BACK_FOUND"
 echo "mac history:   $(sqlite3 "$MAC_DB" 'select count(*) from history_items;')"
 echo "linux history: $(ssh "$LINUX_HOST" "sqlite3 $LINUX_DB 'select count(*) from history_items;'")"
 

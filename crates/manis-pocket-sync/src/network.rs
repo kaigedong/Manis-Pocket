@@ -50,6 +50,8 @@ pub struct NetworkManager {
     clipboard_store: Option<PathBuf>,
     clipboard_ready: bool,
     pending_persist: bool,
+    /// When each peer was last dialed, so reconnects back off instead of racing.
+    last_dial: HashMap<PeerId, Instant>,
     listen_port: u16,
     local_peer_id: PeerId,
     /// IP:port strings of our own listen addresses (collected from NewListenAddr).
@@ -202,13 +204,23 @@ impl NetworkManager {
             paired_peers: HashSet::new(),
             pending_pairings: HashMap::new(),
             clipboard,
-            clipboard_ready: clipboard_store.is_none(),
+            clipboard_ready: true,
             pending_persist: false,
+            last_dial: HashMap::new(),
             clipboard_store,
             listen_port,
             local_peer_id,
             local_addrs: HashSet::new(),
         })
+    }
+
+    /// Finds a known peer whose advertised address matches `addr`.
+    fn peer_id_for_addr(&self, addr: &libp2p::Multiaddr) -> Option<PeerId> {
+        let text = addr.to_string();
+        self.discovered_peers
+            .iter()
+            .find(|(_, info)| info.addresses.iter().any(|known| known == &text))
+            .map(|(peer, _)| *peer)
     }
 
     /// Restore the in-memory paired-peer set from the persisted DB on startup.
@@ -293,13 +305,21 @@ impl NetworkManager {
                         log::debug!("Skipping self-dial for new peer {}: {}", peer_id, addr);
                         continue;
                     }
+                    let connected = self.swarm.is_connected(&peer_id);
                     let info = PeerInfo {
                         peer_id: peer_id.to_string(),
                         display_name: String::new(),
                         addresses: vec![addr.to_string()],
-                        is_connected: false,
+                        is_connected: connected,
                     };
                     self.discovered_peers.insert(peer_id, info);
+                    if connected {
+                        // Dialing again makes libp2p replace the live connection;
+                        // when the replacement handshake fails the peer is left
+                        // with nothing and sync stops.
+                        log::debug!("Already connected to {}, not dialing again", peer_id);
+                        continue;
+                    }
                     if let Err(e) = self.swarm.dial(peer_id) {
                         log::debug!("Dial failed for {}: {:?}", peer_id, e);
                     }
@@ -830,6 +850,13 @@ impl NetworkManager {
                 };
                 log::info!("Dialing {} (from {})", multiaddr, address);
                 if let Ok(addr) = multiaddr.parse::<libp2p::Multiaddr>() {
+                    // Same reasoning as mDNS: never replace a working connection.
+                    if let Some(peer) = self.peer_id_for_addr(&addr) {
+                        if self.swarm.is_connected(&peer) {
+                            log::info!("Already connected to {}, skipping dial", peer);
+                            return;
+                        }
+                    }
                     match self.swarm.dial(addr.clone()) {
                         Ok(()) => log::info!("Dialing {}", addr),
                         Err(e) => {
@@ -915,15 +942,12 @@ impl NetworkManager {
     }
 
     fn reconcile_all(&mut self) {
-        if self.pending_persist {
+        if self.pending_persist || !self.clipboard_ready {
             if !self.persist_clipboard(&self.clipboard) {
                 return;
             }
             self.pending_persist = false;
             self.clipboard_ready = true;
-        }
-        if !self.clipboard_ready {
-            return;
         }
         let peers: Vec<_> = self
             .paired_peers
@@ -933,6 +957,26 @@ impl NetworkManager {
             .collect();
         for peer in peers {
             self.request_head(peer);
+        }
+
+        // A dropped connection used to mean "silently offline until mDNS happens
+        // to announce the peer again". Redial paired peers on a slow cadence so a
+        // transient network blip heals on its own.
+        let offline: Vec<_> = self
+            .paired_peers
+            .iter()
+            .copied()
+            .filter(|peer| !self.swarm.is_connected(peer))
+            .filter(|peer| {
+                self.last_dial
+                    .get(peer)
+                    .is_none_or(|at| at.elapsed() > Duration::from_secs(10))
+            })
+            .collect();
+        for peer in offline {
+            log::debug!("redialing paired peer {}", peer);
+            self.last_dial.insert(peer, Instant::now());
+            let _ = self.swarm.dial(peer);
         }
     }
 

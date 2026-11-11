@@ -94,3 +94,12 @@ GPUI 版要接进来，**macOS 那个 job 的构建产物会换掉**，其余流
 
 - [ ] 把 `release` job 的产物指到 GPUI 版（等签名 secrets 配好并实机验证一轮之后）
 - [ ] Linux 侧出 `.deb` / AppImage（当前只有 tar.gz + `install-linux.sh`）
+
+### 发布接入（已实现）
+
+`gpui.yml` 在 `v*` tag 上会额外跑一个 `publish` job：等主流水线把 Release 建好后，
+把 `ManisPocket-gpui-macos.zip` 和 `ManisPocket-gpui-linux-x86_64.tar.gz`
+作为附加资产上传到同一个 Release。
+
+这样 GPUI 版**可以直接下载**，而默认下载仍然是 SwiftUI 版；要彻底切换，
+只需从 `build.yml` 删掉 `build-macos` job（Android 与 Sparkle 更新链路不受影响）。

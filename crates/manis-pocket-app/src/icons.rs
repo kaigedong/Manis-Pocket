@@ -7,8 +7,11 @@
 //! Linux has no equivalent (icons come from the desktop's icon theme and need the
 //! `.desktop` entry), so there the row keeps the letter badge.
 
+use std::sync::Arc;
+#[cfg(target_os = "macos")]
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(target_os = "macos")]
+use std::sync::{Mutex, OnceLock};
 
 use gpui_kit::RenderImage;
 

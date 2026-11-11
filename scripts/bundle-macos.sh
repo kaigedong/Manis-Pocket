@@ -14,6 +14,10 @@ PROFILE="${PROFILE:-debug}"
 # installed app are replaced in place. Use BUNDLE_ID=...gpui for a side-by-side
 # test copy.
 BUNDLE_ID="${BUNDLE_ID:-com.kaigedong.manispocket}"
+# Release builds pass a Developer ID identity; local builds stay ad-hoc. A real
+# identity also needs the hardened runtime, otherwise the app cannot be notarized.
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+VERSION="${VERSION:-2.7.127}"
 APP_NAME="Manis Pocket"
 OUT="$REPO/build/$APP_NAME.app"
 
@@ -57,8 +61,8 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>$APP_NAME</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>2.7.127</string>
-  <key>CFBundleVersion</key><string>2.7.127</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <!-- Menu-bar app: no Dock icon, like the SwiftUI build. -->
   <key>LSUIElement</key><true/>
@@ -68,8 +72,25 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc signature: enough for local runs and for AppKit to treat it as a real app.
-codesign --force --sign - "$OUT" >/dev/null 2>&1 || echo "warning: ad-hoc signing failed" >&2
+# Ad-hoc signing is enough locally; a Developer ID signature plus the hardened
+# runtime is what makes the download openable on another Mac.
+if [ "$SIGN_IDENTITY" = "-" ]; then
+  codesign --force --sign - "$OUT" >/dev/null 2>&1 || echo "warning: ad-hoc signing failed" >&2
+else
+  codesign --force --options runtime --timestamp \
+    --sign "$SIGN_IDENTITY" "$OUT" >/dev/null
+  codesign --verify --deep --strict --verbose=2 "$OUT"
+fi
+
+# Notarization needs App Store Connect credentials; skipped when absent so a
+# local or PR build still produces a usable app.
+if [ -n "${NOTARY_PROFILE:-}" ]; then
+  ZIP="$REPO/build/ManisPocket.zip"
+  ditto -c -k --sequesterRsrc --keepParent "$OUT" "$ZIP"
+  xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$OUT"
+  echo "notarized and stapled"
+fi
 
 echo "built $OUT"
 du -sh "$OUT"

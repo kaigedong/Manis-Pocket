@@ -62,3 +62,35 @@ GPUI 版要接进来，**macOS 那个 job 的构建产物会换掉**，其余流
 | 中文输入法候选框不出现 | 已定位到 macOS 后端光标矩形，已加回退；**待实机确认** | 中文用户无法选词 |
 | 删除图标是 ✕ 而非垃圾桶 | gpui-kit 图标集无 Trash | 视觉差异，非功能 |
 | 行内 hover 按钮未做视觉校对 | 代码就绪 | 可能位置/大小不对 |
+
+## 7. 已落地：GPUI 专用流水线
+
+`.github/workflows/gpui.yml` 于本次重构加入，与 `build.yml`（SwiftUI + Android）并存，
+以免迁移期把已发布的产品线打断。它做两件事：
+
+| Job | 内容 |
+|---|---|
+| `macos` | `cargo test`（app / core / sync）→ `scripts/bundle-macos.sh`（Release）→ zip 上传 |
+| `linux` | 安装 Wayland/XKB/fontconfig 等依赖 → `cargo build --release -p manis-pocket-app` → 打包 tar.gz |
+
+### 签名与公证
+
+`scripts/bundle-macos.sh` 现在按环境变量工作，缺省仍是 ad-hoc 签名（本机可用、不可分发）：
+
+| 变量 | 作用 |
+|---|---|
+| `SIGN_IDENTITY` | Developer ID Application 证书名；设置后自动加 `--options runtime` 并校验 |
+| `NOTARY_PROFILE` | `notarytool` 的 keychain profile 名；设置后提交公证并 `stapler` 装订 |
+| `VERSION` | 写入 `CFBundleShortVersionString` / `CFBundleVersion` |
+
+流水线里需要配置这些 repository secrets（缺任一项会退化为 ad-hoc 签名，构建仍然成功）：
+
+- `MACOS_CERTIFICATE_P12`（base64 的 .p12）
+- `MACOS_CERTIFICATE_PASSWORD`
+- `MACOS_SIGN_IDENTITY`
+- `MACOS_NOTARY_APPLE_ID`、`MACOS_NOTARY_PASSWORD`、`MACOS_TEAM_ID`
+
+### 尚未完成
+
+- [ ] 把 `release` job 的产物指到 GPUI 版（等签名 secrets 配好并实机验证一轮之后）
+- [ ] Linux 侧出 `.deb` / AppImage（当前只有 tar.gz + `install-linux.sh`）

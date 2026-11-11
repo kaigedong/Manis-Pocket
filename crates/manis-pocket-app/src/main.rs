@@ -78,6 +78,8 @@ struct HistoryList {
     paste_by_default: bool,
     /// Mirrors `showSpecialSymbols`: render whitespace markers in titles.
     show_special_symbols: bool,
+    /// Entries picked with ⌘-click, in pick order. Empty means "no multi-select".
+    checked: Vec<String>,
     /// Whether matches use a background colour instead of bold text.
     highlight_background: bool,
     /// Match ranges per item id, straight from the core's search results.
@@ -252,6 +254,7 @@ impl ListDelegate for HistoryList {
 
         let click_id = item.id.clone();
         let click_history = self.history.clone();
+        let panel_handle = self.panel.clone();
         let hover_id = item.id.clone();
 
         // Trailing slot: the copy and delete buttons while hovered, otherwise the
@@ -303,6 +306,25 @@ impl ListDelegate for HistoryList {
                         })),
                 )
                 .into_any_element()
+        } else if let Some(order) = self
+            .checked
+            .iter()
+            .position(|id| id == &item.id)
+            .map(|index| index + 1)
+        {
+            div()
+                .flex_shrink_0()
+                .px_1()
+                .rounded(px(3.0))
+                .bg(if selected {
+                    gpui::rgb(0xFF_FFFF).opacity(0.35)
+                } else {
+                    gpui::rgb(0x0A84FF)
+                })
+                .text_size(px(10.0))
+                .text_color(gpui::white())
+                .child(SharedString::from(format!("{order}")))
+                .into_any_element()
         } else if let Some(pin) = item.pin.clone() {
             div()
                 .flex_shrink_0()
@@ -346,7 +368,20 @@ impl ListDelegate for HistoryList {
                         }
                     },
                 ))
-                .on_click(move |_, window, _cx| {
+                .on_click(move |event, window, cx| {
+                    // ⌘-click builds a paste stack instead of copying at once.
+                    let command = matches!(
+                        event,
+                        gpui::ClickEvent::Mouse(mouse) if mouse.down.modifiers.platform
+                    );
+                    if command {
+                        if let Some(panel) = panel_handle.as_ref().and_then(|panel| panel.upgrade()) {
+                            panel.update(cx, |panel, cx| {
+                                panel.toggle_checked(click_id.clone(), cx);
+                            });
+                        }
+                        return;
+                    }
                     if copy_entry_to_clipboard(&click_history, &click_id) {
                         window.remove_window();
                     }
@@ -377,6 +412,37 @@ impl ListDelegate for HistoryList {
         _window: &mut Window,
         _cx: &mut Context<ListState<Self>>,
     ) {
+        // With entries picked by ⌘-click, enter pastes them together in pick
+        // order instead of copying the highlighted row.
+        if !self.checked.is_empty() {
+            let mut parts: Vec<String> = Vec::new();
+            for id in self.checked.clone() {
+                let Ok(contents) = self.history.contents(id) else {
+                    continue;
+                };
+                if let Some(text) = contents
+                    .iter()
+                    .find(|content| {
+                        matches!(
+                            content.content_type.as_str(),
+                            "public.utf8-plain-text"
+                                | "text/plain"
+                                | "text/plain;charset=utf-8"
+                        )
+                    })
+                    .and_then(|content| content.value.as_ref())
+                    .map(|value| String::from_utf8_lossy(value).to_string())
+                {
+                    parts.push(text);
+                }
+            }
+            if !parts.is_empty() && crate::clipboard::write_text(&parts.join("\n")) {
+                self.checked.clear();
+                _window.remove_window();
+            }
+            return;
+        }
+
         let Some(ix) = self.selected else {
             return;
         };
@@ -414,6 +480,8 @@ struct HistoryPanel {
     preview_open: bool,
     /// When set, the list only shows entries copied from this application.
     active_app: Option<String>,
+    /// Entries picked with ⌘-click, in pick order; the order is the paste order.
+    checked: Vec<String>,
     /// Decoded preview images, keyed by entry id: decoding a PNG on every frame
     /// would make the panel stutter on large screenshots.
     preview_images: std::collections::HashMap<String, Option<(std::sync::Arc<gpui_kit::RenderImage>, f32, f32)>>,
@@ -457,6 +525,7 @@ impl HistoryPanel {
                     show_application_icons: settings.show_application_icons,
                     paste_by_default: settings.paste_by_default,
                     show_special_symbols: settings.show_special_symbols,
+                    checked: Vec::new(),
                     highlight_background: settings.highlight_match != "bold",
                     highlights: std::collections::HashMap::new(),
                     hovered: None,
@@ -518,6 +587,17 @@ impl HistoryPanel {
             settings,
             preview_open: std::env::var("MANIS_POCKET_PREVIEW").is_ok(),
             active_app: None,
+            // Screenshot/test hook: pre-check entries by id.
+            checked: std::env::var("MANIS_POCKET_CHECKED")
+                .ok()
+                .map(|ids| {
+                    ids.split(',')
+                        .map(str::trim)
+                        .filter(|id| !id.is_empty())
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
             preview_images: std::collections::HashMap::new(),
         }
     }
@@ -678,6 +758,27 @@ impl HistoryPanel {
     }
 
     /// Decodes the selected entry's picture once and keeps it for repaints.
+    /// Adds or removes one entry from the ⌘-clicked set.
+    fn toggle_checked(&mut self, id: String, cx: &mut Context<Self>) {
+        if let Some(index) = self.checked.iter().position(|existing| existing == &id) {
+            self.checked.remove(index);
+        } else {
+            self.checked.push(id);
+        }
+        self.sync_checked(cx);
+        cx.notify();
+    }
+
+    /// Mirrors the panel's picked set into the list delegate, which draws the
+    /// order badges.
+    fn sync_checked(&mut self, cx: &mut Context<Self>) {
+        let checked = self.checked.clone();
+        self.list.update(cx, |state, cx| {
+            state.delegate_mut().checked = checked;
+            cx.notify();
+        });
+    }
+
     fn load_preview_image(&mut self, cx: &mut Context<Self>) {
         let Some(item) = self.selected_item(cx).or_else(|| {
             self.list
@@ -935,6 +1036,7 @@ impl Render for HistoryPanel {
 
 
         let count = self.list.read(cx).delegate().items.len();
+        let checked = self.list.read(cx).delegate().checked.len();
 
         div()
             .flex()
@@ -1044,9 +1146,11 @@ impl Render for HistoryPanel {
                                             .border_color(gpui::black().opacity(0.08))
                                             .text_xs()
                                             .text_color(gpui::black().opacity(0.45))
-                                            .child(SharedString::from(format!(
-                                                "{count} 条 · 上下选择 · 回车复制 · ⌘1-9 快速取用 · esc 关闭"
-                                            )))
+                                            .child(SharedString::from(if checked > 0 {
+                                                format!("已选 {checked} 项 · 回车按顺序粘贴 · esc 关闭")
+                                            } else {
+                                                format!("{count} 条 · 上下选择 · 回车复制 · ⌘ 点击多选 · esc 关闭")
+                                            }))
                                             .into_any_element()
                                     })),
                             )
@@ -1318,7 +1422,10 @@ fn open_panel(cx: &mut App) {
             // the entity exists rather than during the first paint.
             let handle = panel.clone();
             window.defer(cx, move |_window, cx| {
-                handle.update(cx, |panel, cx| panel.load_preview_image(cx));
+                handle.update(cx, |panel, cx| {
+                    panel.sync_checked(cx);
+                    panel.load_preview_image(cx);
+                });
             });
             panel
         },

@@ -268,6 +268,33 @@ pub fn apply_remote(content: &manis_pocket_core::model::ClipboardContent) -> boo
     }
 }
 
+/// Puts plain text on the system clipboard.
+pub fn write_text(text: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        arboard::Clipboard::new()
+            .and_then(|mut clipboard| clipboard.set_text(text.to_string()))
+            .is_ok()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        use std::io::Write;
+        std::process::Command::new("wl-copy")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                child
+                    .stdin
+                    .as_mut()
+                    .map(|stdin| stdin.write_all(text.as_bytes()))
+                    .transpose()?;
+                child.wait()
+            })
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+}
+
 /// Presses the paste shortcut in whatever app is in front.
 ///
 /// `pasteByDefault` needs this: the panel closes, focus returns to the previous

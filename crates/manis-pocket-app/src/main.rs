@@ -504,8 +504,8 @@ impl HistoryPanel {
         let mut settings = settings::Settings::load(&database);
         // Metadata only: payloads are fetched on demand so startup does not
         // depend on how much content the history holds.
-        let all_items = history.load_metadata().unwrap_or_default();
-
+        let all_metadata = history.load_metadata().unwrap_or_default();
+        let all_items = all_metadata.clone();
         // A default smaller than what is already stored would delete entries the
         // first time something new is copied, so never load below the real size.
         let stored = all_items.len() as i64;
@@ -885,6 +885,9 @@ impl HistoryPanel {
         let mut bar = h_flex().w_full().gap_1().px_3().pb_2().items_center();
 
         for app in apps.into_iter().take(8) {
+            // Letter badge rather than the bundle icon: asking AppKit for an icon
+            // here (during paint, deferred, or preloaded at construction) left the
+            // window unpainted, so the bar stays with the row's fallback style.
             let (initial, (red, green, blue)) = rows::app_badge(&app);
             let icon = div()
                 .size(px(18.0))

@@ -46,7 +46,21 @@ pub fn row_kind(item: &ClipboardItem) -> RowKind {
 /// Text entries have a title already (the first line of what was copied). Rows
 /// without text would otherwise render as an empty line, so they get a label.
 pub fn row_title(item: &ClipboardItem) -> String {
-    let title = item.title.trim();
+    row_title_with_symbols(item, true)
+}
+
+/// Renders a title the way the SwiftUI build does.
+///
+/// `showSpecialSymbols` turns the whitespace that would otherwise be invisible
+/// into visible glyphs; without it the title is simply trimmed.
+pub fn row_title_with_symbols(item: &ClipboardItem, show_symbols: bool) -> String {
+    let raw = item.title.as_str();
+    let title = if show_symbols {
+        decorate_symbols(raw)
+    } else {
+        raw.trim().to_string()
+    };
+    let title = title.trim_end_matches(' ');
     if !title.is_empty() {
         return title.to_string();
     }
@@ -56,6 +70,30 @@ pub fn row_title(item: &ClipboardItem) -> String {
         RowKind::File => "文件".to_string(),
         RowKind::Other => fallback_from_type(item.contents.first()),
     }
+}
+
+/// Replaces leading/trailing spaces and line breaks with visible markers.
+fn decorate_symbols(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let chars: Vec<char> = text.chars().collect();
+    let leading = chars.iter().take_while(|c| **c == ' ').count();
+    for _ in 0..leading {
+        out.push('·');
+    }
+    let body: String = chars[leading..].iter().collect();
+    let trimmed_end = body.trim_end_matches(' ');
+    let trailing = body.chars().count() - trimmed_end.chars().count();
+    for c in trimmed_end.chars() {
+        match c {
+            '\n' => out.push('⏎'),
+            '\t' => out.push('⇥'),
+            other => out.push(other),
+        }
+    }
+    for _ in 0..trailing {
+        out.push('·');
+    }
+    out
 }
 
 fn fallback_from_type(content: Option<&ClipboardContent>) -> String {
@@ -404,6 +442,18 @@ mod tests {
         assert_eq!(relative_time(now - 300_000, now), "5 分钟前");
         assert_eq!(relative_time(now - 7_200_000, now), "2 小时前");
         assert_eq!(relative_time(now - 172_800_000, now), "2 天前");
+    }
+
+    #[test]
+    fn special_symbols_mark_invisible_whitespace() {
+        assert_eq!(decorate_symbols("  hello"), "··hello");
+        assert_eq!(decorate_symbols("hello  "), "hello··");
+        assert_eq!(decorate_symbols("a\nb\tc"), "a⏎b⇥c");
+        // Without the setting the title is only trimmed.
+        let mut entry = item("  padded  ", &["public.utf8-plain-text"]);
+        entry.title = "  padded  ".into();
+        assert_eq!(row_title_with_symbols(&entry, false), "padded");
+        assert_eq!(row_title_with_symbols(&entry, true), "··padded··");
     }
 
     #[test]

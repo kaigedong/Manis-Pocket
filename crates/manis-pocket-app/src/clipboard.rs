@@ -206,3 +206,29 @@ pub fn apply_remote(content: &manis_pocket_core::model::ClipboardContent) -> boo
             .is_ok()
     }
 }
+
+/// Presses the paste shortcut in whatever app is in front.
+///
+/// `pasteByDefault` needs this: the panel closes, focus returns to the previous
+/// application, and the entry that was just copied should land there. macOS goes
+/// through System Events (which needs Accessibility permission, the same one a
+/// real auto-paste implementation requires); Wayland uses `wtype`.
+pub fn paste_into_frontmost() -> bool {
+    #[cfg(target_os = "macos")]
+    let command = (
+        "osascript",
+        vec![
+            "-e".to_string(),
+            "tell application \"System Events\" to keystroke \"v\" using command down"
+                .to_string(),
+        ],
+    );
+    #[cfg(not(target_os = "macos"))]
+    let command = ("wtype", vec!["-M".into(), "ctrl".into(), "v".into(), "-m".into(), "ctrl".into()]);
+
+    std::process::Command::new(command.0)
+        .args(command.1)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}

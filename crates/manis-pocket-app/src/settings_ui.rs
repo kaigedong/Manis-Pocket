@@ -294,36 +294,6 @@ impl SettingsView {
                         cx.notify();
                     }),
                 ));
-                rows.push(switch_row(
-                    "show-search",
-                    "显示搜索框",
-                    self.settings.show_search,
-                    cx.listener(|this, checked, _, cx| {
-                        this.settings.show_search = *checked;
-                        this.save();
-                        cx.notify();
-                    }),
-                ));
-                rows.push(switch_row(
-                    "show-app-icons",
-                    "显示应用图标",
-                    self.settings.show_application_icons,
-                    cx.listener(|this, checked, _, cx| {
-                        this.settings.show_application_icons = *checked;
-                        this.save();
-                        cx.notify();
-                    }),
-                ));
-                rows.push(switch_row(
-                    "show-title",
-                    "显示窗口标题",
-                    self.settings.show_title,
-                    cx.listener(|this, checked, _, cx| {
-                        this.settings.show_title = *checked;
-                        this.save();
-                        cx.notify();
-                    }),
-                ));
             }
             Pane::Appearance => {
                 rows.push(pick_row(
@@ -353,6 +323,56 @@ impl SettingsView {
                     &self.settings.highlight_match,
                     |settings, value| settings.highlight_match = value.to_string(),
                     cx,
+                ));
+                rows.push(switch_row(
+                    "show-search",
+                    "显示搜索框",
+                    self.settings.show_search,
+                    cx.listener(|this, checked, _, cx| {
+                        this.settings.show_search = *checked;
+                        this.save();
+                        cx.notify();
+                    }),
+                ));
+                rows.push(switch_row(
+                    "show-title",
+                    "在搜索框前显示应用名",
+                    self.settings.show_title,
+                    cx.listener(|this, checked, _, cx| {
+                        this.settings.show_title = *checked;
+                        this.save();
+                        cx.notify();
+                    }),
+                ));
+                rows.push(switch_row(
+                    "show-application-icons",
+                    "显示应用程序图标",
+                    self.settings.show_application_icons,
+                    cx.listener(|this, checked, _, cx| {
+                        this.settings.show_application_icons = *checked;
+                        this.save();
+                        cx.notify();
+                    }),
+                ));
+                rows.push(switch_row(
+                    "show-special-symbols",
+                    "显示特殊符号（空格/换行）",
+                    self.settings.show_special_symbols,
+                    cx.listener(|this, checked, _, cx| {
+                        this.settings.show_special_symbols = *checked;
+                        this.save();
+                        cx.notify();
+                    }),
+                ));
+                rows.push(switch_row(
+                    "show-in-status-bar",
+                    "显示菜单栏图标",
+                    self.settings.show_in_status_bar,
+                    cx.listener(|this, checked, _, cx| {
+                        this.settings.show_in_status_bar = *checked;
+                        this.save();
+                        cx.notify();
+                    }),
                 ));
                 rows.push(note(format!(
                     "面板尺寸 {}×{}（窗口宽高，单位 pt）",

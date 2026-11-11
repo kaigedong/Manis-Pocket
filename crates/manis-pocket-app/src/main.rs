@@ -74,6 +74,10 @@ struct HistoryList {
     selected: Option<IndexPath>,
     history: Arc<HistoryManager>,
     show_application_icons: bool,
+    /// Mirrors `pasteByDefault`: pressing enter also pastes into the front app.
+    paste_by_default: bool,
+    /// Mirrors `showSpecialSymbols`: render whitespace markers in titles.
+    show_special_symbols: bool,
     /// Whether matches use a background colour instead of bold text.
     highlight_background: bool,
     /// Match ranges per item id, straight from the core's search results.
@@ -298,9 +302,20 @@ impl ListDelegate for HistoryList {
             return;
         };
         let id = item.id.clone();
+        let paste = self.paste_by_default;
         if copy_entry_to_clipboard(&self.history, &id) {
             // The panel's job is done once the entry is on the clipboard.
             _window.remove_window();
+            if paste {
+                // Focus has to return to the previous application before the
+                // shortcut is delivered, or the paste lands in a dying window.
+                std::thread::spawn(|| {
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    if !crate::clipboard::paste_into_frontmost() {
+                        eprintln!("[clip] auto-paste failed (missing accessibility permission?)");
+                    }
+                });
+            }
         }
     }
 }
@@ -352,6 +367,8 @@ impl HistoryPanel {
                     }),
                     history: history.clone(),
                     show_application_icons: settings.show_application_icons,
+                    paste_by_default: settings.paste_by_default,
+                    show_special_symbols: settings.show_special_symbols,
                     highlight_background: settings.highlight_match != "bold",
                     highlights: std::collections::HashMap::new(),
                     hovered: None,
@@ -753,16 +770,36 @@ impl Render for HistoryPanel {
                                 v_flex()
                                     .flex_1()
                                     .h_full()
-                                    .child(
-                                        div().px_3().pt_2p5().pb_2().child(
-                                            div()
-                                                .w_full()
-                                                .rounded(px(6.0))
-                                                .bg(gpui::rgb(0xF2F2F4))
-                                                .px_2()
-                                                .py_0p5()
-                                                .child(Input::new(&self.input).appearance(false)),
-                                        ),
+                                    .children(
+                                        (self.settings.show_search || self.settings.show_title)
+                                            .then(|| {
+                                                h_flex()
+                                                    .gap_2()
+                                                    .items_center()
+                                                    .px_3()
+                                                    .pt_2p5()
+                                                    .pb_2()
+                                                    .children(self.settings.show_title.then(|| {
+                                                        div()
+                                                            .text_sm()
+                                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                            .flex_shrink_0()
+                                                            .child(SharedString::from("Manis Pocket"))
+                                                    }))
+                                                    .children(self.settings.show_search.then(|| {
+                                                        div()
+                                                            .flex_1()
+                                                            .rounded(px(6.0))
+                                                            .bg(gpui::rgb(0xF2F2F4))
+                                                            .px_2()
+                                                            .py_0p5()
+                                                            .child(
+                                                                Input::new(&self.input)
+                                                                    .appearance(false),
+                                                            )
+                                                    }))
+                                                    .into_any_element()
+                                            }),
                                     )
                                     .child(div().flex_1().px_2().child(List::new(&self.list)))
                                     .children(
@@ -1175,7 +1212,10 @@ fn main() {
 
         // The tray only reports intent; the window handling stays here.
         let (tray_tx, mut tray_rx) = futures::channel::mpsc::unbounded();
-        tray::install(tray_tx);
+        // `showInStatusBar == false` means the app lives only behind its shortcut.
+        if settings::Settings::load(&storage_path()).show_in_status_bar {
+            tray::install(tray_tx);
+        }
 
         // A second launch asks this instance to toggle instead of starting up.
         let (ipc_tx, mut ipc_rx) = futures::channel::mpsc::unbounded();

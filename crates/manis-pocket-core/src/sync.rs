@@ -12,6 +12,8 @@ use crate::platform::ClipboardObserver;
 /// P2P sync engine wrapping manis-pocket-sync's NetworkManager.
 /// Routes all events through the platform's `ClipboardObserver` implementation.
 pub struct SyncEngine {
+    /// Held only to keep the shared state alive for as long as the engine runs.
+    #[allow(dead_code)]
     state: SharedState,
     command_tx: mpsc::UnboundedSender<SyncCommand>,
     #[allow(dead_code)]

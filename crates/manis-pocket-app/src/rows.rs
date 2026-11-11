@@ -335,7 +335,9 @@ pub fn preview_lines(item: &ClipboardItem, now_ms: i64, max_chars: usize) -> Vec
                 .find(|content| TEXT_TYPES.contains(&content.content_type.as_str()))
                 .and_then(|content| content.value.as_ref())
                 .and_then(|value| String::from_utf8(value.clone()).ok())
-                .unwrap_or_else(|| item.title.clone());
+                // No stored payload text: fall back to the same title the row
+                // shows, which knows about images, files and unknown types.
+                .unwrap_or_else(|| row_title(item));
             if text.chars().count() > max_chars {
                 let mut shortened: String = text.chars().take(max_chars).collect();
                 shortened.push('…');

@@ -4,6 +4,10 @@
 //! The clipboard engine (`manis-pocket-core`) is used directly as a library;
 //! there is no FFI boundary any more.
 
+// `unsafe` blocks still mark the Objective-C calls that touch AppKit, even where
+// objc2 has made the individual call safe; the lint would flag every one of them.
+#![allow(unused_unsafe)]
+
 mod clipboard;
 mod icons;
 mod ignore;
@@ -24,7 +28,6 @@ use gpui::{
     Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions,
 };
 use gpui_kit::base::{IndexPath, StyledExt, h_flex, v_flex};
-use gpui_kit::component::{Icon, IconName};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::list::{List, ListDelegate, ListItem, ListState};
 use gpui_kit::*;
@@ -65,10 +68,6 @@ const FOOTER_HEIGHT: f32 = 122.0;
 
 /// Character budget standing in for `truncationMode(.middle)`.
 const TITLE_BUDGET: usize = 28;
-/// Row width inside the card: panel width minus the list's horizontal padding.
-const ROW_WIDTH: f32 = 420.0;
-/// Space the title may use before the shortcut hint starts.
-const ROW_TITLE_WIDTH: f32 = 350.0;
 
 /// Transparent margin around the card, so its shadow and rounded corners have
 /// somewhere to draw. The window is larger than the card by twice this.
@@ -142,7 +141,8 @@ impl ListDelegate for HistoryList {
     ) -> Option<ListItem> {
         let item = self.item_at(ix)?;
         let selected = self.selected == Some(ix);
-        let title = rows::truncate_middle(&rows::row_title(item), TITLE_BUDGET);
+        let full_title = rows::row_title_with_symbols(item, self.show_special_symbols);
+        let title = rows::truncate_middle(&full_title, TITLE_BUDGET);
         let foreground = if selected {
             gpui::white()
         } else {
@@ -238,7 +238,7 @@ impl ListDelegate for HistoryList {
         let ranges = self
             .highlights
             .get(&item.id)
-            .filter(|_| rows::row_title(item).chars().count() <= TITLE_BUDGET);
+            .filter(|_| full_title.chars().count() <= TITLE_BUDGET);
         let spans = ranges
             .map(|ranges| rows::highlight_spans(&title, ranges))
             .unwrap_or_else(|| vec![(title.clone(), false)]);

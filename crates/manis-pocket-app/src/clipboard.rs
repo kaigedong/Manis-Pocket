@@ -124,7 +124,6 @@ mod macos {
     /// File URIs from the pasteboard, if a file list is on it.
     pub fn read_file_url() -> Option<String> {
         use objc2_app_kit::NSPasteboardTypeFileURL;
-        use objc2_foundation::NSString;
 
         let pasteboard = NSPasteboard::generalPasteboard();
         let value = unsafe { pasteboard.stringForType(NSPasteboardTypeFileURL) }?;

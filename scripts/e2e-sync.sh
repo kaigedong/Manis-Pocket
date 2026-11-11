@@ -114,7 +114,10 @@ done
 
 say "copy on linux, expect it on mac"
 BACK="back-$(date +%s)"
-ssh "$LINUX_HOST" "printf '%s' '$BACK' | env XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-1 wl-copy"
+# wl-copy daemonises and keeps the selection alive, and the daemon inherits the
+# ssh channel's stdout, so ssh would wait for it forever. Redirecting the output
+# and bounding the run keeps the script moving.
+ssh "$LINUX_HOST" "printf '%s' '$BACK' | timeout 5 env XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-1 wl-copy >/dev/null 2>&1 || true"
 BACK_FOUND=""
 for _ in $(seq 1 20); do
   BACK_FOUND=$(sqlite3 "$MAC_DB" "select title from history_items where title='$BACK' limit 1;" 2>/dev/null)

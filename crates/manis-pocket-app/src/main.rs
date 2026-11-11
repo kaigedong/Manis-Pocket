@@ -412,6 +412,8 @@ struct HistoryPanel {
     settings: settings::Settings,
     /// The preview sidebar, toggled with ⌃Space like the macOS build.
     preview_open: bool,
+    /// When set, the list only shows entries copied from this application.
+    active_app: Option<String>,
     /// Decoded preview images, keyed by entry id: decoding a PNG on every frame
     /// would make the panel stutter on large screenshots.
     preview_images: std::collections::HashMap<String, Option<(std::sync::Arc<gpui_kit::RenderImage>, f32, f32)>>,
@@ -515,6 +517,7 @@ impl HistoryPanel {
             list,
             settings,
             preview_open: std::env::var("MANIS_POCKET_PREVIEW").is_ok(),
+            active_app: None,
             preview_images: std::collections::HashMap::new(),
         }
     }
@@ -588,13 +591,35 @@ impl HistoryPanel {
         cx.notify();
     }
 
+    /// Applications present in the history, used by the filter bar.
+    fn source_apps(&self) -> Vec<String> {
+        let mut apps: Vec<String> = self
+            .all_items
+            .iter()
+            .filter_map(|item| item.application.clone())
+            .filter(|app| !app.is_empty())
+            .collect();
+        apps.sort();
+        apps.dedup();
+        apps
+    }
+
     fn refresh(&mut self, cx: &mut Context<Self>) {
         // The image cache is filled from the current selection, so refresh it
         // whenever the list content changes.
         let query = self.input.read(cx).value().to_string();
+        let pool = match &self.active_app {
+            Some(app) => self
+                .all_items
+                .iter()
+                .filter(|item| item.application.as_deref() == Some(app.as_str()))
+                .cloned()
+                .collect(),
+            None => self.all_items.clone(),
+        };
         let results = self
             .history
-            .search(&query, self.all_items.clone(), search_mode(&self.settings.search_mode));
+            .search(&query, pool, search_mode(&self.settings.search_mode));
 
         // Search results carry the matched ranges, which the rows draw as
         // highlights; keep them keyed by entry so the list can look them up.
@@ -738,6 +763,59 @@ impl HistoryPanel {
 }
 
 impl HistoryPanel {
+    /// One icon per application that appears in the history; clicking filters the
+    /// list and clicking the same icon again clears the filter.
+    fn render_app_filter(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let apps = self.source_apps();
+        if apps.len() < 2 {
+            return None;
+        }
+        let active = self.active_app.clone();
+        let mut bar = h_flex().w_full().gap_1().px_3().pb_2().items_center();
+
+        for app in apps.into_iter().take(8) {
+            let (initial, (red, green, blue)) = rows::app_badge(&app);
+            let icon = div()
+                .size(px(18.0))
+                .rounded(px(3.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(10.0))
+                .text_color(gpui::white())
+                .bg(gpui::rgb(
+                    (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue),
+                ))
+                .child(initial)
+                .into_any_element();
+
+            let selected = active.as_deref() == Some(app.as_str());
+            let target = app.clone();
+            let mut button = div()
+                .id(SharedString::from(format!("app-filter-{app}")))
+                .p(px(2.0))
+                .rounded(px(4.0))
+                .cursor_pointer()
+                .child(icon);
+            button = if selected {
+                button.bg(gpui::rgb(0x0A84FF).opacity(0.25))
+            } else {
+                button.hover(|style| style.bg(gpui::black().opacity(0.06)))
+            };
+            bar = bar.child(button.on_click(cx.listener(move |this, _, _, cx| {
+                this.active_app = if this.active_app.as_deref() == Some(target.as_str()) {
+                    None
+                } else {
+                    Some(target.clone())
+                };
+                this.refresh(cx);
+                cx.notify();
+            })));
+        }
+
+        Some(bar.into_any_element())
+    }
+
     /// The action footer: the same five rows the macOS build puts under the list.
     fn render_footer(&self, cx: &mut Context<Self>) -> AnyElement {
         let row = |id: &'static str, label: &'static str, shortcut: &'static str| {
@@ -953,6 +1031,7 @@ impl Render for HistoryPanel {
                                                     .into_any_element()
                                             }),
                                     )
+                                    .children(self.render_app_filter(cx))
                                     .child(div().flex_1().px_2().child(List::new(&self.list)))
                                     .children(
                                         self.settings.show_footer.then(|| self.render_footer(cx)),

@@ -624,6 +624,7 @@ impl NetworkManager {
                     self.publish_pairing_message(PairingMessage::Confirm {
                         session_id,
                         target_peer_id: peer.to_string(),
+                        nonce: next_nonce(),
                     });
                     return;
                 }
@@ -655,6 +656,7 @@ impl NetworkManager {
             PairingMessage::Confirm {
                 session_id,
                 target_peer_id,
+                nonce: _,
             } => {
                 if target_peer_id != self.local_peer_id.to_string() {
                     return;
@@ -854,6 +856,7 @@ impl NetworkManager {
                     self.publish_pairing_message(PairingMessage::Confirm {
                         session_id,
                         target_peer_id: peer.to_string(),
+                        nonce: next_nonce(),
                     });
                     self.finish_pairing_if_confirmed(peer);
                 }
@@ -985,6 +988,7 @@ impl NetworkManager {
             self.publish_pairing_message(PairingMessage::Confirm {
                 session_id,
                 target_peer_id: peer.to_string(),
+                nonce: next_nonce(),
             });
         }
 
@@ -996,6 +1000,7 @@ impl NetworkManager {
                 self.publish_pairing_message(PairingMessage::Confirm {
                     session_id: session_id.clone(),
                     target_peer_id: peer.to_string(),
+                    nonce: next_nonce(),
                 });
                 keep.push((peer, session_id, at));
             }
@@ -1088,6 +1093,12 @@ impl NetworkManager {
         }
     }
 
+}
+
+/// Hands out a distinct value for each pairing message we publish.
+fn next_nonce() -> u64 {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Convert a register value into the platform-facing payload.

@@ -138,3 +138,27 @@ mod macos {
         Some(Arc::new(RenderImage::new(vec![Frame::new(buffer)])))
     }
 }
+
+/// Decodes PNG bytes for display, scaled down to `max_width`.
+///
+/// Returns the image and the size it should occupy. A 4000 px screenshot would
+/// otherwise be uploaded as a 4000 px texture just to be drawn 380 px wide.
+pub fn png_to_render_image(bytes: &[u8], max_width: u32) -> Option<(Arc<RenderImage>, f32, f32)> {
+    use image::{Frame, ImageBuffer, Rgba};
+
+    let mut decoded = image::load_from_memory(bytes).ok()?;
+    if decoded.width() > max_width {
+        let height = (decoded.height() as f64 * (max_width as f64 / decoded.width() as f64))
+            .round()
+            .max(1.0) as u32;
+        decoded = decoded.resize(max_width, height, image::imageops::FilterType::Triangle);
+    }
+    let (width, height) = (decoded.width(), decoded.height());
+    let rgba = decoded.to_rgba8();
+    let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_raw(width, height, rgba.into_raw())?;
+    Some((
+        Arc::new(RenderImage::new(vec![Frame::new(buffer)])),
+        width as f32,
+        height as f32,
+    ))
+}

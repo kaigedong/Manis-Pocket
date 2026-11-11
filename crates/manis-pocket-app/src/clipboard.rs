@@ -224,7 +224,13 @@ pub fn paste_into_frontmost() -> bool {
         ],
     );
     #[cfg(not(target_os = "macos"))]
-    let command = ("wtype", vec!["-M".into(), "ctrl".into(), "v".into(), "-m".into(), "ctrl".into()]);
+    let command: (&str, Vec<String>) = (
+        "wtype",
+        ["-M", "ctrl", "v", "-m", "ctrl"]
+            .iter()
+            .map(|arg| arg.to_string())
+            .collect(),
+    );
 
     std::process::Command::new(command.0)
         .args(command.1)

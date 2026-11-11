@@ -301,7 +301,12 @@ pub fn preview_lines(item: &ClipboardItem, now_ms: i64, max_chars: usize) -> Vec
                 text
             }
         }
-        RowKind::Image => format!("图片（{} 字节）", content_len(item)),
+        // The list only carries content types, so the size is unknown until the
+        // payload is fetched; say "图片" rather than a misleading "0 字节".
+        RowKind::Image => match content_len(item) {
+            0 => "图片".to_string(),
+            bytes => format!("图片（{bytes} 字节）"),
+        },
         RowKind::File => "文件".to_string(),
         RowKind::Other => format!("[{}]", content_type_of(item)),
     };

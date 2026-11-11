@@ -645,9 +645,17 @@ mod tests {
         let metadata = mgr.load_metadata().unwrap();
         assert_eq!(metadata.len(), 2);
         assert!(
-            metadata.iter().all(|item| item.contents.is_empty()),
+            metadata
+                .iter()
+                .flat_map(|item| item.contents.iter())
+                .all(|content| content.value.is_none()),
             "metadata must not carry payloads"
         );
+        // The types still come along: the list needs them to tell an image row
+        // from a text row without loading the payload.
+        assert!(metadata
+            .iter()
+            .any(|item| item.contents.iter().any(|c| c.content_type == "public.png")));
         // Listing and search only need titles, which metadata still provides.
         assert!(metadata.iter().any(|item| item.title == "Blob"));
 

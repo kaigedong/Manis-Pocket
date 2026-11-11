@@ -283,9 +283,17 @@ impl ListDelegate for HistoryList {
         &mut self,
         ix: Option<IndexPath>,
         _window: &mut Window,
-        _cx: &mut Context<ListState<Self>>,
+        cx: &mut Context<ListState<Self>>,
     ) {
         self.selected = ix;
+        // Decoding belongs here, not in `render`: doing it while painting kept
+        // the window from ever appearing.
+        if let Some(panel) = self.panel.as_ref().and_then(|panel| panel.upgrade()) {
+            panel.update(cx, |panel, cx| {
+                panel.load_preview_image(cx);
+                cx.notify();
+            });
+        }
     }
 
     fn confirm(
@@ -329,6 +337,9 @@ struct HistoryPanel {
     settings: settings::Settings,
     /// The preview sidebar, toggled with ⌃Space like the macOS build.
     preview_open: bool,
+    /// Decoded preview images, keyed by entry id: decoding a PNG on every frame
+    /// would make the panel stutter on large screenshots.
+    preview_images: std::collections::HashMap<String, Option<(std::sync::Arc<gpui_kit::RenderImage>, f32, f32)>>,
 }
 
 impl HistoryPanel {
@@ -429,6 +440,7 @@ impl HistoryPanel {
             list,
             settings,
             preview_open: std::env::var("MANIS_POCKET_PREVIEW").is_ok(),
+            preview_images: std::collections::HashMap::new(),
         }
     }
 
@@ -488,6 +500,9 @@ impl HistoryPanel {
     /// Opens or closes the preview sidebar, widening the window to match.
     fn toggle_preview(&mut self, cx: &mut Context<Self>) {
         self.preview_open = !self.preview_open;
+        if self.preview_open {
+            self.load_preview_image(cx);
+        }
         // The next render resizes to fit the new width along with the content.
         cx.notify();
     }
@@ -499,6 +514,8 @@ impl HistoryPanel {
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
+        // The image cache is filled from the current selection, so refresh it
+        // whenever the list content changes.
         let query = self.input.read(cx).value().to_string();
         let results = self
             .history
@@ -542,6 +559,63 @@ impl HistoryPanel {
 
 impl HistoryPanel {
     /// The right-hand preview sidebar: full text plus where it came from.
+    /// The selected entry's picture, if it has one.
+    fn preview_image(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let item = self.selected_item(cx)?;
+        if !matches!(rows::row_kind(&item), rows::RowKind::Image) {
+            return None;
+        }
+        let (render, w, h) = self.preview_images.get(&item.id)?.clone()?;
+        let max_width = (self.settings.preview_width as f32 - 24.0).max(80.0);
+        let scale = (max_width / w).min(1.0);
+        Some(
+            img(render)
+                .w(px(w * scale))
+                .h(px(h * scale))
+                .rounded(px(4.0))
+                .into_any_element(),
+        )
+    }
+
+    /// Decodes the selected entry's picture once and keeps it for repaints.
+    fn load_preview_image(&mut self, cx: &mut Context<Self>) {
+        let Some(item) = self.selected_item(cx).or_else(|| {
+            self.list
+                .read(cx)
+                .delegate()
+                .item_at(gpui_kit::base::IndexPath {
+                    section: 0,
+                    row: 0,
+                    column: 0,
+                })
+                .cloned()
+        }) else {
+            return;
+        };
+        if !matches!(rows::row_kind(&item), rows::RowKind::Image) {
+            return;
+        }
+        if self.preview_images.contains_key(&item.id) {
+            return;
+        }
+        // Keep the cache from growing without bound while scrolling a long list.
+        if self.preview_images.len() > 32 {
+            self.preview_images.clear();
+        }
+        let decoded = self
+            .history
+            .contents(item.id.clone())
+            .ok()
+            .and_then(|contents| {
+                contents
+                    .into_iter()
+                    .find(|content| content.content_type == "public.png")
+            })
+            .and_then(|content| content.value)
+            .and_then(|bytes| icons::png_to_render_image(&bytes, 900));
+        self.preview_images.insert(item.id.clone(), decoded);
+    }
+
     fn render_preview(&self, cx: &mut Context<Self>) -> AnyElement {
         let width = self.settings.preview_width as f32;
         let selected = self.selected_item(cx);
@@ -551,6 +625,7 @@ impl HistoryPanel {
             .map(|item| rows::preview_lines(item, now, 600))
             .unwrap_or_default();
 
+        let image = self.preview_image(cx);
         v_flex()
             .w(px(width))
             .h_full()
@@ -559,6 +634,7 @@ impl HistoryPanel {
             .py_2()
             .border_l_1()
             .border_color(gpui::black().opacity(0.08))
+            .children(image)
             .children(lines.is_empty().then(|| {
                 div()
                     .text_sm()
@@ -703,6 +779,7 @@ impl Render for HistoryPanel {
         {
             window.resize(desired);
         }
+
 
         let count = self.list.read(cx).delegate().items.len();
 
@@ -1072,7 +1149,16 @@ fn open_panel(cx: &mut App) {
             ..Default::default()
         },
         cx,
-        |window, cx| cx.new(|cx| HistoryPanel::new(window, cx)),
+        |window, cx| {
+            let panel = cx.new(|cx| HistoryPanel::new(window, cx));
+            // The list is built inside `new`, so the preview cache is filled once
+            // the entity exists rather than during the first paint.
+            let handle = panel.clone();
+            window.defer(cx, move |_window, cx| {
+                handle.update(cx, |panel, cx| panel.load_preview_image(cx));
+            });
+            panel
+        },
     )
     .expect("open history panel");
 }

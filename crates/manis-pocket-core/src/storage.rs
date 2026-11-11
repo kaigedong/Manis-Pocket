@@ -1,4 +1,5 @@
 use rusqlite::{Connection, params};
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::model::{ClipboardContent, ClipboardItem, CoreError};
@@ -336,9 +337,34 @@ impl Storage {
              ORDER BY last_copied_at DESC",
         )?;
 
-        let items = stmt
+        let mut items = stmt
             .query_map([], item_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+
+        // The list needs to know *what kind* of entry each row is (text, image,
+        // file) to label and preview it, but not the payload bytes. Attaching the
+        // type alone keeps this query cheap and stops image entries from showing
+        // up as an unnamed entry.
+        let mut types: HashMap<String, Vec<ClipboardContent>> = HashMap::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT item_id, content_type FROM history_contents ORDER BY item_id, id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (item_id, content_type) = row?;
+            types.entry(item_id).or_default().push(ClipboardContent {
+                content_type,
+                value: None,
+            });
+        }
+        for item in &mut items {
+            if let Some(found) = types.remove(&item.id) {
+                item.contents = found;
+            }
+        }
         Ok(items)
     }
 

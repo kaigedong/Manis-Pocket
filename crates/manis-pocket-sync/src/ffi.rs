@@ -92,14 +92,21 @@ pub extern "C" fn manis_pocket_sync_start(sync: *mut ManisPocketSync) -> i32 {
             guard.command_tx = command_tx;
         }
 
-        let mut manager = match NetworkManager::new(command_rx, shared.clone(), local_key) {
-            Ok(m) => m,
-            Err(e) => return e as i32,
-        };
-
         let rt = {
             let guard = shared.lock().unwrap();
             guard.runtime.handle().clone()
+        };
+
+        // Building the swarm opens sockets: on Linux the mDNS behaviour resolves
+        // interfaces through netlink, which needs a Tokio reactor context and
+        // panics without one. Entering the runtime first keeps this working on
+        // both platforms.
+        let mut manager = {
+            let _guard = rt.enter();
+            match NetworkManager::new(command_rx, shared.clone(), local_key) {
+                Ok(m) => m,
+                Err(e) => return e as i32,
+            }
         };
 
         std::thread::spawn(move || {

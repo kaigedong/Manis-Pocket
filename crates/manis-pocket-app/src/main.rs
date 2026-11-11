@@ -921,6 +921,15 @@ fn copy_entry_to_clipboard(history: &HistoryManager, id: &str) -> bool {
     let Ok(contents) = history.contents(id.to_string()) else {
         return false;
     };
+    // File lists go back as file URLs; without this branch a copied file would
+    // come back as the plain path text.
+    if let Some(files) = contents
+        .iter()
+        .find(|content| content.content_type == "public.file-url")
+    {
+        return crate::clipboard::apply_remote(files);
+    }
+
     // Images come back as PNG; text is the common case and is tried first.
     if let Some(png) = contents
         .iter()
@@ -1401,6 +1410,11 @@ fn record_clipboard_change(
         // An image has no text to show: the row draws a thumbnail placeholder
         // and the preview says how large it is.
         clipboard::Copy::Image(png) => ("public.png", png.clone(), String::new()),
+        clipboard::Copy::File(files) => (
+            "public.file-url",
+            files.clone().into_bytes(),
+            rows::file_title(files),
+        ),
     };
     eprintln!(
         "[clip] change observed: {content_type} {} bytes",
@@ -1411,7 +1425,7 @@ fn record_clipboard_change(
         eprintln!("[clip] image storage disabled");
         return;
     }
-    if matches!(copy, clipboard::Copy::Text(_)) && !settings.save_text {
+    if matches!(copy, clipboard::Copy::File(_)) && !settings.save_text {
         eprintln!("[clip] text storage disabled");
         return;
     }
@@ -1419,6 +1433,7 @@ fn record_clipboard_change(
     let application = source_application();
     let text_for_rules = match &copy {
         clipboard::Copy::Text(text) => text.as_str(),
+        clipboard::Copy::File(files) => files.as_str(),
         clipboard::Copy::Image(_) => "",
     };
     if ignore::should_ignore(settings, application.as_deref(), text_for_rules) {

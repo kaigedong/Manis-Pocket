@@ -18,6 +18,9 @@ pub enum Copy {
     /// PNG bytes, which is how both platforms represent an image off the
     /// clipboard once converted.
     Image(Vec<u8>),
+    /// One or more file URIs, newline separated, exactly as the clipboard
+    /// offers them.
+    File(String),
 }
 
 /// Spawn the platform watcher. Events are `Some(copy)` for payloads that can be
@@ -41,6 +44,11 @@ pub fn spawn(tx: UnboundedSender<Option<Copy>>) {
 fn read_copy() -> Option<Copy> {
     if let Some(png) = macos::read_png() {
         return Some(Copy::Image(png));
+    }
+    // Copying a file in Finder also puts its path on the pasteboard as text, so
+    // the file type has to be checked first or the entry loses its identity.
+    if let Some(files) = macos::read_file_url() {
+        return Some(Copy::File(files));
     }
     arboard::Clipboard::new()
         .ok()
@@ -75,6 +83,24 @@ fn read_copy() -> Option<Copy> {
         }
     }
 
+    // A file list arrives as `text/uri-list`; without this branch it falls
+    // through to the plain-text read and is stored as a string of URLs.
+    if offered.lines().any(|line| line.trim() == "text/uri-list") {
+        let output = Command::new("wl-paste")
+            .args(["--type", "text/uri-list", "--no-newline"])
+            .output()
+            .ok()?;
+        let uris = String::from_utf8(output.stdout).ok()?;
+        let joined: Vec<&str> = uris
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect();
+        if !joined.is_empty() {
+            return Some(Copy::File(joined.join("\n")));
+        }
+    }
+
     let output = Command::new("wl-paste")
         .args(["--no-newline"])
         .output()
@@ -94,6 +120,17 @@ mod macos {
 
     /// Poll interval for the pasteboard change counter.
     const TICK: Duration = Duration::from_millis(250);
+
+    /// File URIs from the pasteboard, if a file list is on it.
+    pub fn read_file_url() -> Option<String> {
+        use objc2_app_kit::NSPasteboardTypeFileURL;
+        use objc2_foundation::NSString;
+
+        let pasteboard = NSPasteboard::generalPasteboard();
+        let value = unsafe { pasteboard.stringForType(NSPasteboardTypeFileURL) }?;
+        let text = value.to_string();
+        (!text.is_empty()).then_some(text)
+    }
 
     /// PNG bytes from the pasteboard, if an image is on it.
     pub fn read_png() -> Option<Vec<u8>> {
@@ -171,6 +208,30 @@ pub fn apply_remote(content: &manis_pocket_core::model::ClipboardContent) -> boo
     let Some(bytes) = content.value.as_ref() else {
         return false;
     };
+    if content.content_type == "public.file-url" {
+        let Some(bytes) = content.value.as_ref() else {
+            return false;
+        };
+        let text = String::from_utf8_lossy(bytes).to_string();
+        #[cfg(target_os = "macos")]
+        {
+            use objc2_app_kit::{NSPasteboard, NSPasteboardTypeFileURL};
+            use objc2_foundation::NSString;
+            let pasteboard = NSPasteboard::generalPasteboard();
+            unsafe { pasteboard.clearContents() };
+            let value = NSString::from_str(&text);
+            return unsafe { pasteboard.setString_forType(&value, NSPasteboardTypeFileURL) };
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            return std::process::Command::new("wl-copy")
+                .args(["--type", "text/uri-list"])
+                .arg(text)
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false);
+        }
+    }
     if content.content_type == "public.png" {
         return crate::icons::write_png_to_pasteboard(bytes);
     }

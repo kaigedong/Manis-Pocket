@@ -45,6 +45,48 @@ pub fn row_kind(item: &ClipboardItem) -> RowKind {
 ///
 /// Text entries have a title already (the first line of what was copied). Rows
 /// without text would otherwise render as an empty line, so they get a label.
+/// Title for a file entry: the file name without the `file://` prefix or the
+/// percent escapes Finder writes.
+pub fn file_title(uris: &str) -> String {
+    let names: Vec<String> = uris
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|uri| {
+            let path = uri.strip_prefix("file://").unwrap_or(uri);
+            let path = percent_decode(path);
+            path.rsplit('/')
+                .next()
+                .filter(|name| !name.is_empty())
+                .unwrap_or(&path)
+                .to_string()
+        })
+        .collect();
+    match names.as_slice() {
+        [] => "文件".to_string(),
+        [single] => single.clone(),
+        [first, rest @ ..] => format!("{} 等 {} 个文件", first, rest.len() + 1),
+    }
+}
+
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(&text[index + 1..index + 3], 16) {
+                out.push(byte);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
 pub fn row_title(item: &ClipboardItem) -> String {
     row_title_with_symbols(item, true)
 }
@@ -67,6 +109,7 @@ pub fn row_title_with_symbols(item: &ClipboardItem, show_symbols: bool) -> Strin
     match row_kind(item) {
         RowKind::Text => String::new(),
         RowKind::Image => "图片".to_string(),
+        RowKind::File if !item.title.trim().is_empty() => item.title.trim().to_string(),
         RowKind::File => "文件".to_string(),
         RowKind::Other => fallback_from_type(item.contents.first()),
     }
@@ -307,6 +350,7 @@ pub fn preview_lines(item: &ClipboardItem, now_ms: i64, max_chars: usize) -> Vec
             0 => "图片".to_string(),
             bytes => format!("图片（{bytes} 字节）"),
         },
+        RowKind::File if !item.title.trim().is_empty() => item.title.trim().to_string(),
         RowKind::File => "文件".to_string(),
         RowKind::Other => format!("[{}]", content_type_of(item)),
     };

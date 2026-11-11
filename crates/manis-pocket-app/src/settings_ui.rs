@@ -605,16 +605,11 @@ impl SettingsView {
                         cx.notify();
                     }),
                 ));
-                rows.push(switch_row(
-                    "sync-discoverable",
-                    "允许被发现",
-                    self.settings.sync_discoverable,
-                    cx.listener(|this, checked, _, cx| {
-                        this.settings.sync_discoverable = *checked;
-                        this.save();
-                        cx.notify();
-                    }),
-                ));
+                // There is no switch for local-network visibility: the engine's
+                // mDNS behaviour is built with the swarm, and its Start/Stop
+                // commands are no-ops, so a toggle here would be a control that
+                // changes nothing. Say so instead of pretending.
+                rows.push(note("设备在局域网内始终可见（mDNS）"));
                 rows.push(note(format!("本机设备名：{}", self.settings.sync_device_name)));
                 let peers = self.history.get_paired_peers();
                 rows.push(note(format!("已配对设备 {} 台", peers.len())));

@@ -64,6 +64,11 @@ pub enum PairingMessage {
     Confirm {
         session_id: String,
         target_peer_id: String,
+        /// Makes every repeat a distinct message: gossipsub drops a message whose
+        /// id it has already seen, so a byte-identical resend never reaches the
+        /// peer, which is exactly the case that needs healing.
+        #[serde(default)]
+        nonce: u64,
     },
     Reject {
         session_id: String,

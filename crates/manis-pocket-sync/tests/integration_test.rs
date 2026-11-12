@@ -52,6 +52,14 @@ fn spawn_node(
     cmd_tx
 }
 
+/// Asks the OS for an unused TCP port.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .map(|addr| addr.port())
+        .expect("a free port")
+}
+
 fn wait_and_report(events: Arc<Mutex<Vec<String>>>, label: &str, secs: u64) {
     println!("\n--- Waiting {}s for {} ---", secs, label);
     std::thread::sleep(Duration::from_secs(secs));
@@ -73,14 +81,19 @@ fn test_manual_dial_two_nodes() {
 
     let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
-    let cmd_tx_a = spawn_node("NodeA", "device-a", 31774, events.clone());
-    let cmd_tx_b = spawn_node("NodeB", "device-b", 31775, events.clone());
+    // Ephemeral ports: the production app owns 31774, and a hardcoded port made
+    // this test fail whenever it was running.
+    let port_a = free_port();
+    let port_b = free_port();
+
+    let cmd_tx_a = spawn_node("NodeA", "device-a", port_a, events.clone());
+    let cmd_tx_b = spawn_node("NodeB", "device-b", port_b, events.clone());
 
     std::thread::sleep(Duration::from_secs(2));
 
-    println!("\n--- Dialing NodeB at /ip4/127.0.0.1/tcp/31775 ---");
+    println!("\n--- Dialing NodeB at /ip4/127.0.0.1/tcp/{port_b} ---");
     let _ = cmd_tx_a.send(SyncCommand::AddPeerAddress {
-        address: "/ip4/127.0.0.1/tcp/31775".to_string(),
+        address: format!("/ip4/127.0.0.1/tcp/{port_b}"),
     });
 
     wait_and_report(events.clone(), "manual dial", 10);

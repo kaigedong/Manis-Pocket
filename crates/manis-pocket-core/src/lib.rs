@@ -1,10 +1,10 @@
-mod error;
-mod history;
-mod model;
-mod platform;
-mod search;
-mod sort;
-mod storage;
-mod sync;
+pub mod error;
+pub mod history;
+pub mod model;
+pub mod platform;
+pub mod search;
+pub mod sort;
+pub mod storage;
+pub mod sync;
 
 uniffi::setup_scaffolding!();

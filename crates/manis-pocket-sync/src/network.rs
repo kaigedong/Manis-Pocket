@@ -22,13 +22,6 @@ const PAIRING_TOPIC: &str = "manis-pocket-sync-pairing-v2";
 const PAIRING_TIMEOUT: Duration = Duration::from_secs(300);
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(5);
 
-struct PendingClipboard {
-    peer: PeerId,
-    update: ClipboardUpdate,
-    channel: Option<request_response::ResponseChannel<ClipboardResponse>>,
-    created_at: Instant,
-}
-
 struct PendingPairing {
     session_id: String,
     pin: String,
@@ -57,7 +50,10 @@ pub struct NetworkManager {
     clipboard_store: Option<PathBuf>,
     clipboard_ready: bool,
     pending_persist: bool,
-    pending_clipboard: Option<PendingClipboard>,
+    /// When each peer was last dialed, so reconnects back off instead of racing.
+    last_dial: HashMap<PeerId, Instant>,
+    /// Pairings we finished but keep re-announcing for a few seconds.
+    recent_confirms: Vec<(PeerId, String, Instant)>,
     listen_port: u16,
     local_peer_id: PeerId,
     /// IP:port strings of our own listen addresses (collected from NewListenAddr).
@@ -71,7 +67,7 @@ impl NetworkManager {
         state: SharedState,
         local_key: Keypair,
     ) -> Result<Self, ErrorCode> {
-        Self::build(command_rx, state, local_key, LISTEN_PORT, None)
+        Self::build(command_rx, state, local_key, listen_port(), None)
     }
 
     pub fn new_with_storage(
@@ -80,7 +76,7 @@ impl NetworkManager {
         local_key: Keypair,
         store_path: PathBuf,
     ) -> Result<Self, ErrorCode> {
-        Self::build(command_rx, state, local_key, LISTEN_PORT, Some(store_path))
+        Self::build(command_rx, state, local_key, listen_port(), Some(store_path))
     }
 
     pub fn new_with_port(
@@ -110,6 +106,9 @@ impl NetworkManager {
         clipboard_store: Option<PathBuf>,
     ) -> Result<Self, ErrorCode> {
         let local_peer_id = PeerId::from(local_key.public());
+        // Printed so a failing handshake can be checked against the identity
+        // peers advertise for us.
+        log::info!("local peer id: {local_peer_id}");
         let clipboard = match clipboard_store.as_deref() {
             Some(path) => {
                 register::load_register(path, &local_peer_id.to_string()).map_err(|error| {
@@ -130,6 +129,11 @@ impl NetworkManager {
 
         let gossipsub_config = gossipsub::ConfigBuilder::default()
             .heartbeat_interval(Duration::from_secs(1))
+            // Pairing is a handful of tiny messages exchanged right after two
+            // peers meet, before a mesh exists. Gossip would wait for the mesh
+            // and silently drop them, which made pairing fail intermittently;
+            // flooding delivers to every connected subscriber immediately.
+            .flood_publish(true)
             .validation_mode(gossipsub::ValidationMode::Strict)
             .message_id_fn(|msg: &gossipsub::Message| {
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -207,14 +211,24 @@ impl NetworkManager {
             paired_peers: HashSet::new(),
             pending_pairings: HashMap::new(),
             clipboard,
-            clipboard_ready: clipboard_store.is_none(),
+            clipboard_ready: true,
             pending_persist: false,
+            last_dial: HashMap::new(),
+            recent_confirms: Vec::new(),
             clipboard_store,
-            pending_clipboard: None,
             listen_port,
             local_peer_id,
             local_addrs: HashSet::new(),
         })
+    }
+
+    /// Finds a known peer whose advertised address matches `addr`.
+    fn peer_id_for_addr(&self, addr: &libp2p::Multiaddr) -> Option<PeerId> {
+        let text = addr.to_string();
+        self.discovered_peers
+            .iter()
+            .find(|(_, info)| info.addresses.iter().any(|known| known == &text))
+            .map(|(peer, _)| *peer)
     }
 
     /// Restore the in-memory paired-peer set from the persisted DB on startup.
@@ -299,13 +313,21 @@ impl NetworkManager {
                         log::debug!("Skipping self-dial for new peer {}: {}", peer_id, addr);
                         continue;
                     }
+                    let connected = self.swarm.is_connected(&peer_id);
                     let info = PeerInfo {
                         peer_id: peer_id.to_string(),
                         display_name: String::new(),
                         addresses: vec![addr.to_string()],
-                        is_connected: false,
+                        is_connected: connected,
                     };
                     self.discovered_peers.insert(peer_id, info);
+                    if connected {
+                        // Dialing again makes libp2p replace the live connection;
+                        // when the replacement handshake fails the peer is left
+                        // with nothing and sync stops.
+                        log::debug!("Already connected to {}, not dialing again", peer_id);
+                        continue;
+                    }
                     if let Err(e) = self.swarm.dial(peer_id) {
                         log::debug!("Dial failed for {}: {:?}", peer_id, e);
                     }
@@ -533,43 +555,54 @@ impl NetworkManager {
         }
     }
 
+    /// Merges a peer's clipboard into the local register.
+    ///
+    /// The register is *state*: it advances as soon as the update is newer, no
+    /// matter what the platform later does with the system clipboard. Tying this
+    /// to a platform acknowledgement used to stall the register forever when the
+    /// write failed, which in turn made every later update bounce off `Retry`.
     fn receive_clipboard_update(
         &mut self,
         peer: PeerId,
         update: ClipboardUpdate,
         channel: Option<request_response::ResponseChannel<ClipboardResponse>>,
     ) {
+        let mut next = self.clipboard.clone();
         let result = if update.revision.peer_id != peer.to_string() {
             MergeResult::Invalid
         } else {
-            self.clipboard.compare(&update)
+            next.apply(update.clone())
         };
         let status = match result {
-            MergeResult::AlreadyCurrent => Some(ApplyStatus::Applied),
-            MergeResult::Stale => Some(ApplyStatus::Stale),
-            MergeResult::Invalid => Some(ApplyStatus::Invalid),
-            MergeResult::Applied if self.pending_clipboard.is_some() => Some(ApplyStatus::Retry),
-            MergeResult::Applied => None,
-        };
-        if let Some(status) = status {
-            if let Some(channel) = channel {
-                self.respond_clipboard(channel, ClipboardResponse::Apply { status });
+            MergeResult::Applied => {
+                let content = clipboard_value_payload(&update.value);
+                let event_id = update.event_id.clone();
+                self.clipboard = next;
+                if !self.persist_clipboard(&self.clipboard) {
+                    // Retried by the periodic reconcile, not by blocking the peer.
+                    self.pending_persist = true;
+                }
+                self.state_emit(SyncEvent::CurrentClipboardReceived {
+                    event_id,
+                    peer_id: peer.to_string(),
+                    content,
+                });
+                // Propagate to the other paired peers: with three or more
+                // devices the sender may not be connected to all of them.
+                for other in self.paired_peers.iter().copied().collect::<Vec<_>>() {
+                    if other != peer {
+                        self.send_current(other, update.clone());
+                    }
+                }
+                ApplyStatus::Applied
             }
-            return;
+            MergeResult::AlreadyCurrent => ApplyStatus::Applied,
+            MergeResult::Stale => ApplyStatus::Stale,
+            MergeResult::Invalid => ApplyStatus::Invalid,
+        };
+        if let Some(channel) = channel {
+            self.respond_clipboard(channel, ClipboardResponse::Apply { status });
         }
-        let content = clipboard_value_payload(&update.value);
-        let event_id = update.event_id.clone();
-        self.pending_clipboard = Some(PendingClipboard {
-            peer,
-            update,
-            channel,
-            created_at: Instant::now(),
-        });
-        self.state_emit(SyncEvent::CurrentClipboardReceived {
-            event_id,
-            peer_id: peer.to_string(),
-            content,
-        });
     }
 
     fn handle_pairing_message(&mut self, peer: PeerId, msg: PairingMessage) {
@@ -579,10 +612,20 @@ impl NetworkManager {
                 target_peer_id,
                 device_name,
             } => {
-                if target_peer_id != self.local_peer_id.to_string()
-                    || peer == self.local_peer_id
-                    || self.paired_peers.contains(&peer)
-                {
+                if target_peer_id != self.local_peer_id.to_string() || peer == self.local_peer_id {
+                    return;
+                }
+                if self.paired_peers.contains(&peer) {
+                    // Already paired. The other side may have missed our confirm,
+                    // so answer again: pairing is retried and must be idempotent,
+                    // otherwise a dropped confirm leaves the peer unable to pair
+                    // until the app restarts.
+                    log::info!("Re-confirming an existing pairing with {peer}");
+                    self.publish_pairing_message(PairingMessage::Confirm {
+                        session_id,
+                        target_peer_id: peer.to_string(),
+                        nonce: next_nonce(),
+                    });
                     return;
                 }
                 if self
@@ -613,6 +656,7 @@ impl NetworkManager {
             PairingMessage::Confirm {
                 session_id,
                 target_peer_id,
+                nonce: _,
             } => {
                 if target_peer_id != self.local_peer_id.to_string() {
                     return;
@@ -652,8 +696,17 @@ impl NetworkManager {
             .get(&peer)
             .is_some_and(|pending| pending.local_confirmed && pending.remote_confirmed)
         {
+            let session_id = self
+                .pending_pairings
+                .get(&peer)
+                .map(|pending| pending.session_id.clone())
+                .unwrap_or_default();
             self.pending_pairings.remove(&peer);
             self.paired_peers.insert(peer);
+            // Keep confirming for a while: the peer may have missed the message
+            // that completed our side, and without a repeat it waits forever.
+            self.recent_confirms
+                .push((peer, session_id, Instant::now()));
             self.state_emit(SyncEvent::PairingComplete {
                 peer_id: peer.to_string(),
                 success: true,
@@ -734,16 +787,14 @@ impl NetworkManager {
             SyncCommand::ObserveLocalClipboard { value } => {
                 self.observe_local_clipboard(value);
             }
+            // Kept for API compatibility with the platform bindings; the register
+            // no longer waits for either of them.
             SyncCommand::CurrentClipboardApplied { event_id, success } => {
-                self.finish_clipboard_apply(&event_id, success);
+                log::debug!("platform reported clipboard apply {event_id}: {success}");
             }
             SyncCommand::ShouldApplyCurrentClipboard { event_id, reply } => {
-                let allowed = self.pending_clipboard.as_ref().is_some_and(|pending| {
-                    pending.update.event_id == event_id
-                        && self.paired_peers.contains(&pending.peer)
-                        && self.clipboard.compare(&pending.update) == MergeResult::Applied
-                });
-                let _ = reply.send(allowed);
+                log::debug!("platform asked whether to apply {event_id}");
+                let _ = reply.send(true);
             }
             // History records are local. Clipboard state uses its own versioned protocol.
             SyncCommand::BroadcastDeletion { .. } | SyncCommand::BroadcastUpdate { .. } => {}
@@ -805,6 +856,7 @@ impl NetworkManager {
                     self.publish_pairing_message(PairingMessage::Confirm {
                         session_id,
                         target_peer_id: peer.to_string(),
+                        nonce: next_nonce(),
                     });
                     self.finish_pairing_if_confirmed(peer);
                 }
@@ -827,6 +879,13 @@ impl NetworkManager {
                 };
                 log::info!("Dialing {} (from {})", multiaddr, address);
                 if let Ok(addr) = multiaddr.parse::<libp2p::Multiaddr>() {
+                    // Same reasoning as mDNS: never replace a working connection.
+                    if let Some(peer) = self.peer_id_for_addr(&addr) {
+                        if self.swarm.is_connected(&peer) {
+                            log::info!("Already connected to {}, skipping dial", peer);
+                            return;
+                        }
+                    }
                     match self.swarm.dial(addr.clone()) {
                         Ok(()) => log::info!("Dialing {}", addr),
                         Err(e) => {
@@ -848,22 +907,6 @@ impl NetworkManager {
             SyncCommand::Unpair { peer_id } => {
                 if let Ok(peer) = peer_id.parse::<PeerId>() {
                     self.paired_peers.remove(&peer);
-                    if self
-                        .pending_clipboard
-                        .as_ref()
-                        .is_some_and(|pending| pending.peer == peer)
-                    {
-                        if let Some(pending) = self.pending_clipboard.take() {
-                            if let Some(channel) = pending.channel {
-                                self.respond_clipboard(
-                                    channel,
-                                    ClipboardResponse::Apply {
-                                        status: ApplyStatus::Retry,
-                                    },
-                                );
-                            }
-                        }
-                    }
                 }
             }
             SyncCommand::SendFileChunk {
@@ -914,6 +957,13 @@ impl NetworkManager {
     }
 
     fn send_current(&mut self, peer: PeerId, update: ClipboardUpdate) {
+        // A request to a peer we are not connected to is silently dropped by the
+        // request-response layer. Skipping it is honest: the periodic reconcile
+        // sends a head request as soon as the connection is back.
+        if !self.swarm.is_connected(&peer) {
+            log::debug!("skipping clipboard push to disconnected peer {peer}");
+            return;
+        }
         self.swarm
             .behaviour_mut()
             .clipboard_sync
@@ -921,31 +971,48 @@ impl NetworkManager {
     }
 
     fn reconcile_all(&mut self) {
-        if self
-            .pending_clipboard
-            .as_ref()
-            .is_some_and(|pending| pending.created_at.elapsed() > Duration::from_secs(10))
-        {
-            if let Some(pending) = self.pending_clipboard.take() {
-                if let Some(channel) = pending.channel {
-                    self.respond_clipboard(
-                        channel,
-                        ClipboardResponse::Apply {
-                            status: ApplyStatus::Retry,
-                        },
-                    );
-                }
+        // Pairing confirms travel over gossip, which can drop while the mesh is
+        // still forming. Keep re-announcing our side until the peer answers or
+        // the handshake times out; duplicates are ignored by the receiver.
+        let mut republish: Vec<(PeerId, String)> = Vec::new();
+        for (peer, pending) in &self.pending_pairings {
+            if pending.local_confirmed
+                && !pending.remote_confirmed
+                && pending.created_at.elapsed() <= PAIRING_TIMEOUT
+            {
+                republish.push((*peer, pending.session_id.clone()));
             }
         }
-        if self.pending_persist {
+        for (peer, session_id) in republish {
+            log::debug!("re-sending pairing confirm to {peer}");
+            self.publish_pairing_message(PairingMessage::Confirm {
+                session_id,
+                target_peer_id: peer.to_string(),
+                nonce: next_nonce(),
+            });
+        }
+
+        // A completed pairing keeps announcing itself briefly, so a peer that
+        // missed the confirming message can still finish its side.
+        let mut keep: Vec<(PeerId, String, Instant)> = Vec::new();
+        for (peer, session_id, at) in std::mem::take(&mut self.recent_confirms) {
+            if at.elapsed() <= Duration::from_secs(10) {
+                self.publish_pairing_message(PairingMessage::Confirm {
+                    session_id: session_id.clone(),
+                    target_peer_id: peer.to_string(),
+                    nonce: next_nonce(),
+                });
+                keep.push((peer, session_id, at));
+            }
+        }
+        self.recent_confirms = keep;
+
+        if self.pending_persist || !self.clipboard_ready {
             if !self.persist_clipboard(&self.clipboard) {
                 return;
             }
             self.pending_persist = false;
             self.clipboard_ready = true;
-        }
-        if !self.clipboard_ready {
-            return;
         }
         let peers: Vec<_> = self
             .paired_peers
@@ -955,6 +1022,26 @@ impl NetworkManager {
             .collect();
         for peer in peers {
             self.request_head(peer);
+        }
+
+        // A dropped connection used to mean "silently offline until mDNS happens
+        // to announce the peer again". Redial paired peers on a slow cadence so a
+        // transient network blip heals on its own.
+        let offline: Vec<_> = self
+            .paired_peers
+            .iter()
+            .copied()
+            .filter(|peer| !self.swarm.is_connected(peer))
+            .filter(|peer| {
+                self.last_dial
+                    .get(peer)
+                    .is_none_or(|at| at.elapsed() > Duration::from_secs(10))
+            })
+            .collect();
+        for peer in offline {
+            log::debug!("redialing paired peer {}", peer);
+            self.last_dial.insert(peer, Instant::now());
+            let _ = self.swarm.dial(peer);
         }
     }
 
@@ -1006,42 +1093,12 @@ impl NetworkManager {
         }
     }
 
-    fn finish_clipboard_apply(&mut self, event_id: &str, success: bool) {
-        let Some(pending) = self.pending_clipboard.take() else {
-            return;
-        };
-        if pending.update.event_id != event_id {
-            self.pending_clipboard = Some(pending);
-            return;
-        }
-        let status = if !success || !self.paired_peers.contains(&pending.peer) {
-            ApplyStatus::Retry
-        } else {
-            let mut next = self.clipboard.clone();
-            match next.apply(pending.update) {
-                MergeResult::Applied => {
-                    self.clipboard = next;
-                    if self.persist_clipboard(&self.clipboard) {
-                        self.pending_persist = false;
-                        ApplyStatus::Applied
-                    } else {
-                        self.pending_persist = true;
-                        self.clipboard_ready = false;
-                        ApplyStatus::Retry
-                    }
-                }
-                MergeResult::AlreadyCurrent => ApplyStatus::Applied,
-                MergeResult::Stale => ApplyStatus::Stale,
-                MergeResult::Invalid => ApplyStatus::Invalid,
-            }
-        };
-        if let Some(channel) = pending.channel {
-            self.respond_clipboard(channel, ClipboardResponse::Apply { status });
-        }
-        if status == ApplyStatus::Applied {
-            self.request_head(pending.peer);
-        }
-    }
+}
+
+/// Hands out a distinct value for each pairing message we publish.
+fn next_nonce() -> u64 {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Convert a register value into the platform-facing payload.
@@ -1090,6 +1147,15 @@ fn portable_value_from_json(json: &str) -> Option<ClipboardValue> {
         mime: register::SHAREABLE_IMAGE_MIME.into(),
         data: image.value.clone()?,
     })
+}
+
+/// Port to listen on. Overridable so two instances can run side by side — the
+/// production app already owns the default one on a machine under test.
+fn listen_port() -> u16 {
+    std::env::var("MANIS_POCKET_SYNC_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(LISTEN_PORT)
 }
 
 fn pairing_pin(session_id: &str, local: &PeerId, remote: &PeerId) -> String {

@@ -37,9 +37,12 @@ fn spawn_node(name: &str, port: u16) -> Node {
     let (commands, rx) = tokio::sync::mpsc::unbounded_channel();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut manager =
-            manis_pocket_sync::network::NetworkManager::new_with_port(rx, state, key, port)
-                .unwrap();
+        // Building the swarm opens sockets; on Linux mDNS resolves interfaces
+        // through netlink, which needs a Tokio reactor context.
+        let mut manager = {
+            let _guard = rt.enter();
+            manis_pocket_sync::network::NetworkManager::new_with_port(rx, state, key, port).unwrap()
+        };
         rt.block_on(manager.run());
     });
     Node {
@@ -196,6 +199,10 @@ fn synthetic_clipboard_message_reaches_second_node_after_pairing() {
     wait_for(&b, |event| {
         text_of(event).as_deref() == Some("before-approval")
     });
+    // The register is state: it advances as soon as the update is newer, without
+    // waiting for the platform to write the system clipboard. Two consequences
+    // this test pins down: the same update is delivered exactly once, and an
+    // unconfirmed update does not block the next one.
     let first_event = b
         .events
         .lock()
@@ -209,43 +216,24 @@ fn synthetic_clipboard_message_reaches_second_node_after_pairing() {
             }
             _ => None,
         })
-        .unwrap();
-    b.commands
-        .send(SyncCommand::CurrentClipboardApplied {
-            event_id: first_event.clone(),
-            success: false,
+        .expect("the first update arrives without any platform acknowledgement");
+
+    std::thread::sleep(Duration::from_millis(600));
+    let deliveries = b
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| {
+            matches!(event,
+                SyncEvent::CurrentClipboardReceived { event_id, .. } if event_id == &first_event
+            )
         })
-        .unwrap();
-    let retry_deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        let count = b
-            .events
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|event| {
-                matches!(event,
-                    SyncEvent::CurrentClipboardReceived { event_id, .. }
-                        if event_id == &first_event
-                            && text_of(event).as_deref() == Some("before-approval")
-                )
-            })
-            .count();
-        if count >= 2 {
-            break;
-        }
-        assert!(
-            Instant::now() < retry_deadline,
-            "failed clipboard write was not retried"
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    b.commands
-        .send(SyncCommand::CurrentClipboardApplied {
-            event_id: first_event,
-            success: true,
-        })
-        .unwrap();
+        .count();
+    assert_eq!(
+        deliveries, 1,
+        "an applied update must not be delivered again while waiting for a platform ack"
+    );
 
     a.commands
         .send(SyncCommand::ObserveLocalClipboard {
@@ -255,26 +243,6 @@ fn synthetic_clipboard_message_reaches_second_node_after_pairing() {
     wait_for(&b, |event| {
         text_of(event).as_deref() == Some("synthetic-clipboard-payload")
     });
-    let second_event = b
-        .events
-        .lock()
-        .unwrap()
-        .iter()
-        .find_map(|event| match event {
-            SyncEvent::CurrentClipboardReceived { event_id, .. }
-                if text_of(event).as_deref() == Some("synthetic-clipboard-payload") =>
-            {
-                Some(event_id.clone())
-            }
-            _ => None,
-        })
-        .unwrap();
-    b.commands
-        .send(SyncCommand::CurrentClipboardApplied {
-            event_id: second_event,
-            success: true,
-        })
-        .unwrap();
 
     a.commands
         .send(SyncCommand::ObserveLocalClipboard {
@@ -285,26 +253,6 @@ fn synthetic_clipboard_message_reaches_second_node_after_pairing() {
         &b,
         |event| matches!(event, SyncEvent::CurrentClipboardReceived { content: None, peer_id, .. } if peer_id == &a.peer_id),
     );
-    let clear_event = b
-        .events
-        .lock()
-        .unwrap()
-        .iter()
-        .find_map(|event| match event {
-            SyncEvent::CurrentClipboardReceived {
-                event_id,
-                content: None,
-                ..
-            } => Some(event_id.clone()),
-            _ => None,
-        })
-        .unwrap();
-    b.commands
-        .send(SyncCommand::CurrentClipboardApplied {
-            event_id: clear_event,
-            success: true,
-        })
-        .unwrap();
     std::thread::sleep(Duration::from_millis(300));
     assert!(
         !c.events

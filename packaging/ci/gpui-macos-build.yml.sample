@@ -1,0 +1,43 @@
+# Sample replacement for the `build-macos` job in .github/workflows/build.yml.
+#
+# NOT active: it lives outside .github/ on purpose. Moving it into place swaps the
+# shipped macOS artifact, which needs the release decisions in
+# docs/gpui-port/ci-plan.md first (artifact naming, versioning, signing).
+  build-macos:
+    name: Build Manis Pocket (macOS, GPUI)
+    needs: version
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      # The app needs the vendored macOS backend patch, which is part of the repo.
+      - name: Test
+        run: |
+          cargo test -p manis-pocket-core
+          cargo test -p manis-pocket-app
+          cargo test -p manis-pocket-sync
+
+      - name: Build and bundle
+        env:
+          PROFILE: release
+          BUNDLE_ID: com.kaigedong.manispocket
+        run: scripts/bundle-macos.sh
+
+      # Signing and notarisation are deliberately absent: they depend on the
+      # decision recorded in docs/gpui-port/ci-plan.md §2. Add them here once the
+      # certificate and notarisation strategy is settled.
+      - name: Verify the bundle starts
+        run: |
+          "build/Manis Pocket.app/Contents/MacOS/manis-pocket" --probe-app || true
+          codesign --verify --deep --strict "build/Manis Pocket.app" || echo "unsigned"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ManisPocket-macos-gpui
+          path: build/Manis Pocket.app
+          if-no-files-found: error

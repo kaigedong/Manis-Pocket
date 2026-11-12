@@ -12,6 +12,8 @@ use crate::platform::ClipboardObserver;
 /// P2P sync engine wrapping manis-pocket-sync's NetworkManager.
 /// Routes all events through the platform's `ClipboardObserver` implementation.
 pub struct SyncEngine {
+    /// Held only to keep the shared state alive for as long as the engine runs.
+    #[allow(dead_code)]
     state: SharedState,
     command_tx: mpsc::UnboundedSender<SyncCommand>,
     #[allow(dead_code)]
@@ -233,11 +235,17 @@ impl SyncEngine {
                 Ok(rt) => rt,
                 Err(_) => return,
             };
-            let manager = match clipboard_store {
-                Some(path) => {
-                    NetworkManager::new_with_storage(command_rx, net_state, local_key, path)
+            // The swarm opens sockets while it is built: on Linux mDNS resolves
+            // interfaces through netlink, which needs a Tokio reactor context and
+            // panics without one. Enter the runtime before constructing it.
+            let manager = {
+                let _guard = rt.enter();
+                match clipboard_store {
+                    Some(path) => {
+                        NetworkManager::new_with_storage(command_rx, net_state, local_key, path)
+                    }
+                    None => NetworkManager::new(command_rx, net_state, local_key),
                 }
-                None => NetworkManager::new(command_rx, net_state, local_key),
             };
             let mut mgr = match manager {
                 Ok(m) => m,

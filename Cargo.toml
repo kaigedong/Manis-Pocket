@@ -4,8 +4,15 @@ members = [
     "crates/manis-pocket-sync",
     "crates/manis-pocket-wayland",
     "crates/manis-pocket-linux",
+    "crates/manis-pocket-app",
 ]
 resolver = "2"
 
 [workspace.package]
 edition = "2024"
+
+# The macOS backend is patched locally: the IME candidate window needs a caret
+# rectangle, and the published snapshot returns an empty one in some cases,
+# which leaves the candidate list invisible while composition still works.
+[patch.crates-io]
+gpui-pre-macos = { path = "vendor/gpui-pre-macos" }

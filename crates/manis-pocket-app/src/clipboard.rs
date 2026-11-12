@@ -294,8 +294,7 @@ pub fn paste_permission() -> bool {
 /// Opens the system pane where the permission is granted.
 pub fn open_paste_permission_settings() -> bool {
     #[cfg(target_os = "macos")]
-    let target =
-        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+    let target = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
     #[cfg(not(target_os = "macos"))]
     let target = "accessibility";
 
@@ -345,8 +344,7 @@ pub fn paste_into_frontmost() -> bool {
         "osascript",
         vec![
             "-e".to_string(),
-            "tell application \"System Events\" to keystroke \"v\" using command down"
-                .to_string(),
+            "tell application \"System Events\" to keystroke \"v\" using command down".to_string(),
         ],
     );
     #[cfg(not(target_os = "macos"))]

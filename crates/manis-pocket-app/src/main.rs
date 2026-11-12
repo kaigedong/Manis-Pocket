@@ -8,11 +8,11 @@
 // objc2 has made the individual call safe; the lint would flag every one of them.
 #![allow(unused_unsafe)]
 
+#[cfg(target_os = "linux")]
+mod apps_linux;
 mod clipboard;
 mod icons;
 mod ignore;
-#[cfg(target_os = "linux")]
-mod apps_linux;
 mod ipc;
 mod rows;
 mod settings;
@@ -23,15 +23,14 @@ mod tray;
 use chrono::Utc;
 use futures::StreamExt;
 use gpui::{
-    TitlebarOptions, div, point, px, size, App, Bounds, Context, Entity, IntoElement, Point, SharedString,
-    Size,
-    Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions,
+    App, Bounds, Context, Entity, IntoElement, Point, SharedString, Size, TitlebarOptions, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point, px, size,
 };
 use gpui_kit::base::{IndexPath, StyledExt, h_flex, v_flex};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::list::{List, ListDelegate, ListItem, ListState};
-use gpui_kit::*;
 use gpui_kit::img;
+use gpui_kit::*;
 use manis_pocket_core::history::HistoryManager;
 use manis_pocket_core::model::{ClipboardContent, ClipboardItem, SearchMode};
 use settings::Settings;
@@ -42,7 +41,10 @@ use std::sync::{Arc, OnceLock};
 static HISTORY: OnceLock<Arc<HistoryManager>> = OnceLock::new();
 
 fn history() -> Arc<HistoryManager> {
-    HISTORY.get().expect("history is initialised at startup").clone()
+    HISTORY
+        .get()
+        .expect("history is initialised at startup")
+        .clone()
 }
 
 /// Row metrics from the macOS build (`Popup.itemHeight`, `Popup.cornerRadius`).
@@ -130,7 +132,10 @@ impl ListDelegate for HistoryList {
     }
 
     fn items_count(&self, section: usize, _cx: &App) -> usize {
-        self.sections().get(section).map(|(_, len)| *len).unwrap_or(0)
+        self.sections()
+            .get(section)
+            .map(|(_, len)| *len)
+            .unwrap_or(0)
     }
 
     fn render_item(
@@ -172,9 +177,7 @@ impl ListDelegate for HistoryList {
                             .size(px(ICON_SIZE))
                             .rounded(px(3.0))
                             .bg(gpui::rgb(
-                                (u32::from(red) << 16)
-                                    | (u32::from(green) << 8)
-                                    | u32::from(blue),
+                                (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue),
                             ))
                             .flex()
                             .items_center()
@@ -185,9 +188,7 @@ impl ListDelegate for HistoryList {
                             .into_any_element()
                     }
                 };
-                row = row
-                    .child(div().pl_1().child(glyph))
-                    .child(div().w(px(5.0)));
+                row = row.child(div().pl_1().child(glyph)).child(div().w(px(5.0)));
             } else {
                 row = row.child(div().w(px(10.0)));
             }
@@ -222,14 +223,9 @@ impl ListDelegate for HistoryList {
         // A colour swatch before the title when the copied text is a colour.
         if let Some((red, green, blue)) = rows::hex_color(&title) {
             row = row
-                .child(
-                    div()
-                        .size(px(12.0))
-                        .rounded(px(2.0))
-                        .bg(gpui::rgb(
-                            (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue),
-                        )),
-                )
+                .child(div().size(px(12.0)).rounded(px(2.0)).bg(gpui::rgb(
+                    (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue),
+                )))
                 .child(div().w(px(5.0)));
         }
 
@@ -244,23 +240,19 @@ impl ListDelegate for HistoryList {
             .unwrap_or_else(|| vec![(title.clone(), false)]);
         let highlight_background = self.highlight_background;
 
-        row = row.child(
-            h_flex()
-                .flex_1()
-                .min_w(px(0.0))
-                .overflow_hidden()
-                .children(spans.into_iter().map(|(text, matched)| {
-                    let mut span = div().child(text);
-                    if matched {
-                        span = if highlight_background {
-                            span.bg(gpui::rgb(0xFFF1_76))
-                        } else {
-                            span.font_weight(gpui::FontWeight::BOLD)
-                        };
-                    }
-                    span
-                })),
-        );
+        row = row.child(h_flex().flex_1().min_w(px(0.0)).overflow_hidden().children(
+            spans.into_iter().map(|(text, matched)| {
+                let mut span = div().child(text);
+                if matched {
+                    span = if highlight_background {
+                        span.bg(gpui::rgb(0xFFF1_76))
+                    } else {
+                        span.font_weight(gpui::FontWeight::BOLD)
+                    };
+                }
+                span
+            }),
+        ));
 
         let click_id = item.id.clone();
         let click_history = self.history.clone();
@@ -364,7 +356,13 @@ impl ListDelegate for HistoryList {
                 .w_full()
                 .rounded(px(ROW_CORNER))
                 .bg(gpui::rgb(SELECTION_ACCENT).opacity(if selected { 0.8 } else { 0.0 }))
-                .child(h_flex().w_full().justify_between().child(row).child(trailing))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .child(row)
+                        .child(trailing),
+                )
                 .on_hover(cx.listener(
                     move |state: &mut ListState<HistoryList>,
                           hovered: &bool,
@@ -385,7 +383,8 @@ impl ListDelegate for HistoryList {
                         gpui::ClickEvent::Mouse(mouse) if mouse.down.modifiers.platform
                     );
                     if command {
-                        if let Some(panel) = panel_handle.as_ref().and_then(|panel| panel.upgrade()) {
+                        if let Some(panel) = panel_handle.as_ref().and_then(|panel| panel.upgrade())
+                        {
                             panel.update(cx, |panel, cx| {
                                 panel.toggle_checked(click_id.clone(), cx);
                             });
@@ -458,9 +457,7 @@ impl ListDelegate for HistoryList {
                     .find(|content| {
                         matches!(
                             content.content_type.as_str(),
-                            "public.utf8-plain-text"
-                                | "text/plain"
-                                | "text/plain;charset=utf-8"
+                            "public.utf8-plain-text" | "text/plain" | "text/plain;charset=utf-8"
                         )
                     })
                     .and_then(|content| content.value.as_ref())
@@ -517,7 +514,10 @@ struct HistoryPanel {
     checked: Vec<String>,
     /// Decoded preview images, keyed by entry id: decoding a PNG on every frame
     /// would make the panel stutter on large screenshots.
-    preview_images: std::collections::HashMap<String, Option<(std::sync::Arc<gpui_kit::RenderImage>, f32, f32)>>,
+    preview_images: std::collections::HashMap<
+        String,
+        Option<(std::sync::Arc<gpui_kit::RenderImage>, f32, f32)>,
+    >,
 }
 
 impl HistoryPanel {
@@ -537,9 +537,8 @@ impl HistoryPanel {
             settings.save(&database);
         }
 
-        let input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder(SharedString::from("搜索"))
-        });
+        let input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(SharedString::from("搜索")));
         let pins_position = settings.pins_position.clone();
         let arranged = rows::arrange(all_items.clone(), &pins_position, &settings.sort_by);
         let panel_handle = cx.entity().downgrade();
@@ -634,7 +633,6 @@ impl HistoryPanel {
             preview_images: std::collections::HashMap::new(),
         }
     }
-
 
     /// A peer changed the history (or the network state): reload and redraw.
     fn on_sync_notice(&mut self, notice: sync_runtime::SyncNotice, cx: &mut Context<Self>) {
@@ -991,18 +989,20 @@ impl HistoryPanel {
                 })),
             )
             .child(
-                row("footer-clear-all", "全部清除", "⇧⌥⌘Del")
-                    .on_click(cx.listener(|this, _, _, cx| {
+                row("footer-clear-all", "全部清除", "⇧⌥⌘Del").on_click(cx.listener(
+                    |this, _, _, cx| {
                         let _ = this.history.clear_all();
                         this.reload(cx);
-                    })),
+                    },
+                )),
             )
             .child(
-                row("footer-preferences", "偏好设置…", "⌘,")
-                    .on_click(cx.listener(|_, _, window, cx| {
+                row("footer-preferences", "偏好设置…", "⌘,").on_click(cx.listener(
+                    |_, _, window, cx| {
                         let _ = window;
                         open_settings(cx);
-                    })),
+                    },
+                )),
             )
             .child(
                 row("footer-about", "关于", "").on_click(cx.listener(|_, _, _, _cx| {
@@ -1010,9 +1010,7 @@ impl HistoryPanel {
                     icons::show_about_panel();
                 })),
             )
-            .child(
-                row("footer-quit", "退出", "⌘Q").on_click(cx.listener(|_, _, _, cx| cx.quit())),
-            )
+            .child(row("footer-quit", "退出", "⌘Q").on_click(cx.listener(|_, _, _, cx| cx.quit())))
             .into_any_element()
     }
 }
@@ -1030,9 +1028,17 @@ impl HistoryPanel {
         // Everything that is not the list: search row, filter bar, footer and the
         // status line. Under-counting these clipped the last row.
         let chrome = HEADER_HEIGHT
-            + if self.source_apps().len() >= 2 { APP_FILTER_HEIGHT } else { 0.0 }
+            + if self.source_apps().len() >= 2 {
+                APP_FILTER_HEIGHT
+            } else {
+                0.0
+            }
             + footer
-            + if self.settings.show_footer { STATUS_HEIGHT } else { 0.0 };
+            + if self.settings.show_footer {
+                STATUS_HEIGHT
+            } else {
+                0.0
+            };
         let content = rows * ROW_PITCH + chrome;
         let min_height = HEADER_HEIGHT + 5.0;
         let max_height = self.settings.window_height.max(min_height as f64) as f32;
@@ -1049,7 +1055,9 @@ impl HistoryPanel {
     }
 
     fn visible_rows(&self) -> usize {
-        self.all_items.len().min(self.settings.window_height.max(1.0) as usize)
+        self.all_items
+            .len()
+            .min(self.settings.window_height.max(1.0) as usize)
     }
 }
 
@@ -1075,7 +1083,6 @@ impl Render for HistoryPanel {
         {
             window.resize(desired);
         }
-
 
         let count = self.list.read(cx).delegate().items.len();
         let checked = self.list.read(cx).delegate().checked.len();
@@ -1202,7 +1209,6 @@ impl Render for HistoryPanel {
     }
 }
 
-
 /// Maps the `searchMode` setting onto the core's search mode.
 fn search_mode(value: &str) -> SearchMode {
     match value {
@@ -1315,9 +1321,7 @@ fn panel_bounds(cx: &App, panel: Size<gpui::Pixels>, settings: &Settings) -> Bou
         // the Y flip for the main screen does not apply there, so a point outside
         // this display falls back to the corner instead of going off-screen.
         "cursor" => match mouse_location(&screen) {
-            Some(mouse) if within(&screen, mouse) => {
-                clamp(mouse.x.as_f32(), mouse.y.as_f32())
-            }
+            Some(mouse) if within(&screen, mouse) => clamp(mouse.x.as_f32(), mouse.y.as_f32()),
             _ => default_origin(&screen, panel),
         },
         // `statusItem`, `window` and `lastPosition` need the menu-bar button or
@@ -1496,8 +1500,8 @@ fn toggle_panel(cx: &mut App) {
 
 /// The SwiftUI build opens the panel with ⇧⌘C (modifiers 768 + key code 8).
 fn register_popup_hotkey() {
-    use global_hotkey::hotkey::{Code, HotKey, Modifiers};
     use global_hotkey::GlobalHotKeyManager;
+    use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 
     let Ok(manager) = GlobalHotKeyManager::new() else {
         // No hotkey support (no display server, sandboxed): the panel can still
@@ -1621,7 +1625,10 @@ fn main() {
     }
     if let Some(index) = flag("--accept") {
         if let (Some(peer_id), Some(pin)) = (args.get(index + 1), args.get(index + 2)) {
-            return exit_after(ipc::send(&storage_path(), &format!("accept {peer_id} {pin}")));
+            return exit_after(ipc::send(
+                &storage_path(),
+                &format!("accept {peer_id} {pin}"),
+            ));
         }
     }
     if let Some(index) = flag("--connect") {
@@ -1798,7 +1805,11 @@ fn record_clipboard_change(
         sync_deleted: false,
     };
 
-    let _ = history.add(item, settings.history_size as i32, settings.unlimited_history);
+    let _ = history.add(
+        item,
+        settings.history_size as i32,
+        settings.unlimited_history,
+    );
 
     // Tell the sync engine what is on the clipboard now, so paired peers receive
     // it. Without this the local copy stays local.

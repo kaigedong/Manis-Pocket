@@ -122,7 +122,10 @@ mod tests {
             }
             other => panic!("unexpected: {other:?}"),
         }
-        assert!(matches!(parse("connect /ip4/1.2.3.4/tcp/1"), Some(IpcCommand::Connect(_))));
+        assert!(matches!(
+            parse("connect /ip4/1.2.3.4/tcp/1"),
+            Some(IpcCommand::Connect(_))
+        ));
         assert!(parse("nonsense").is_none());
     }
 }

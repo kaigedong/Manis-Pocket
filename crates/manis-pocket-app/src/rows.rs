@@ -519,10 +519,16 @@ mod tests {
         last.number_of_copies = 9;
 
         let by_last = arrange(vec![first.clone(), last.clone()], "top", "lastCopiedAt");
-        assert_eq!(by_last.items[0].title, "first", "newest last_copied_at first");
+        assert_eq!(
+            by_last.items[0].title, "first",
+            "newest last_copied_at first"
+        );
 
         let by_first = arrange(vec![first.clone(), last.clone()], "top", "firstCopiedAt");
-        assert_eq!(by_first.items[0].title, "first", "oldest first_copied_at first");
+        assert_eq!(
+            by_first.items[0].title, "first",
+            "oldest first_copied_at first"
+        );
 
         let by_copies = arrange(vec![first, last], "top", "numberOfCopies");
         assert_eq!(by_copies.items[0].title, "last", "most copies first");
@@ -548,7 +554,11 @@ mod tests {
         pinned_a.pin = Some("a".into());
         let loose = item("loose", &["public.utf8-plain-text"]);
 
-        let arranged = arrange(vec![loose.clone(), pinned_b, pinned_a], "top", "lastCopiedAt");
+        let arranged = arrange(
+            vec![loose.clone(), pinned_b, pinned_a],
+            "top",
+            "lastCopiedAt",
+        );
         assert_eq!(arranged.pinned_count, 2);
         // Titles identify the entries: the test helper's rows share one id.
         assert_eq!(arranged.items[0].pin, Some("a".to_string()));
@@ -574,7 +584,11 @@ mod tests {
         entry.id = "e2e".into();
         manager.add(entry, 100, false).unwrap();
 
-        let results = manager.search("deploy", manager.load_metadata().unwrap(), SearchMode::Mixed);
+        let results = manager.search(
+            "deploy",
+            manager.load_metadata().unwrap(),
+            SearchMode::Mixed,
+        );
         assert_eq!(results.len(), 1);
         let ranges: Vec<(usize, usize)> = results[0]
             .ranges
@@ -584,18 +598,22 @@ mod tests {
         assert!(!ranges.is_empty(), "the core reports match ranges");
 
         let spans = highlight_spans("deploy the service", &ranges);
-        assert!(spans.iter().any(|(text, matched)| *matched && text.eq_ignore_ascii_case("deploy")));
+        assert!(
+            spans
+                .iter()
+                .any(|(text, matched)| *matched && text.eq_ignore_ascii_case("deploy"))
+        );
     }
 
     #[test]
     fn highlight_splits_around_matches() {
-        assert_eq!(highlight_spans("hello", &[]), vec![("hello".to_string(), false)]);
+        assert_eq!(
+            highlight_spans("hello", &[]),
+            vec![("hello".to_string(), false)]
+        );
         assert_eq!(
             highlight_spans("hello world", &[(6, 11)]),
-            vec![
-                ("hello ".to_string(), false),
-                ("world".to_string(), true)
-            ]
+            vec![("hello ".to_string(), false), ("world".to_string(), true)]
         );
         // Two matches produce alternating spans.
         let spans = highlight_spans("ab cd", &[(0, 2), (3, 5)]);
@@ -618,7 +636,10 @@ mod tests {
             vec![("a".to_string(), false), ("bcdef".to_string(), true)]
         );
         // Ranges entirely past the text are dropped rather than panicking.
-        assert_eq!(highlight_spans("ab", &[(5, 9)]), vec![("ab".to_string(), false)]);
+        assert_eq!(
+            highlight_spans("ab", &[(5, 9)]),
+            vec![("ab".to_string(), false)]
+        );
     }
 
     #[test]
@@ -649,7 +670,12 @@ mod tests {
         assert!(shortened.ends_with("qrst"));
         assert!(shortened.contains('…'));
         // CJK text is truncated by characters, not bytes.
-        assert_eq!(truncate_middle("这是很长的一段中文标题内容", 8).chars().count(), 8);
+        assert_eq!(
+            truncate_middle("这是很长的一段中文标题内容", 8)
+                .chars()
+                .count(),
+            8
+        );
     }
 
     #[test]

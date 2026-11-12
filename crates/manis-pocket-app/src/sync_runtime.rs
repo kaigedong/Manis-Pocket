@@ -8,12 +8,12 @@
 //! pushes into a channel that the UI polls on its own tick.
 
 use futures::channel::mpsc::UnboundedSender;
-use std::collections::HashSet;
-use std::sync::Mutex;
 use manis_pocket_core::history::HistoryManager;
 use manis_pocket_core::model::ClipboardItem;
 use manis_pocket_core::platform::ClipboardObserver;
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use crate::settings::Settings;
 
@@ -47,7 +47,8 @@ pub fn remember_pairing(peer_id: &str) {
 
 fn remember_request(peer_id: &str) {
     if let Ok(mut slot) = REQUESTED.lock() {
-        slot.get_or_insert_with(HashSet::new).insert(peer_id.to_string());
+        slot.get_or_insert_with(HashSet::new)
+            .insert(peer_id.to_string());
     }
 }
 
@@ -154,7 +155,9 @@ impl ClipboardObserver for AppObserver {
         if take_request(&peer_id) {
             // We started this pairing, so confirm our own side immediately; the
             // peer still has to accept on its own.
-            let _ = self.history.sync_accept_pairing(peer_id.clone(), pin.clone());
+            let _ = self
+                .history
+                .sync_accept_pairing(peer_id.clone(), pin.clone());
             eprintln!("[sync] auto-confirmed our side of the pairing with {peer_id}");
         }
         self.notify(SyncNotice::PairingRequest {
@@ -234,7 +237,11 @@ mod tests {
     use super::*;
     use manis_pocket_core::model::ClipboardContent;
 
-    fn observer() -> (Arc<HistoryManager>, AppObserver, futures::channel::mpsc::UnboundedReceiver<SyncNotice>) {
+    fn observer() -> (
+        Arc<HistoryManager>,
+        AppObserver,
+        futures::channel::mpsc::UnboundedReceiver<SyncNotice>,
+    ) {
         let history = Arc::new(HistoryManager::new(":memory:".to_string()).unwrap());
         let (tx, rx) = futures::channel::mpsc::unbounded();
         let observer = AppObserver {
@@ -273,7 +280,10 @@ mod tests {
         let stored = history.load_metadata().unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].title, "from the phone");
-        assert!(matches!(rx.try_next(), Ok(Some(SyncNotice::HistoryChanged))));
+        assert!(matches!(
+            rx.try_next(),
+            Ok(Some(SyncNotice::HistoryChanged))
+        ));
     }
 
     #[test]
@@ -284,7 +294,10 @@ mod tests {
 
         observer.on_item_deleted("peer-1".to_string());
         assert!(history.load_metadata().unwrap().is_empty());
-        assert!(matches!(rx.try_next(), Ok(Some(SyncNotice::HistoryChanged))));
+        assert!(matches!(
+            rx.try_next(),
+            Ok(Some(SyncNotice::HistoryChanged))
+        ));
     }
 
     #[test]

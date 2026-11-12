@@ -347,9 +347,9 @@ impl Storage {
         // type alone keeps this query cheap and stops image entries from showing
         // up as an unnamed entry.
         let mut types: HashMap<String, Vec<ClipboardContent>> = HashMap::new();
-        let mut stmt = self.conn.prepare(
-            "SELECT item_id, content_type FROM history_contents ORDER BY item_id, id",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT item_id, content_type FROM history_contents ORDER BY item_id, id")?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
@@ -427,8 +427,10 @@ impl Storage {
             "DELETE FROM history_contents WHERE item_id = ?1",
             params![id],
         )?;
-        self.conn
-            .execute("DELETE FROM item_content_hashes WHERE item_id = ?1", params![id])?;
+        self.conn.execute(
+            "DELETE FROM item_content_hashes WHERE item_id = ?1",
+            params![id],
+        )?;
         self.conn
             .execute("DELETE FROM history_items WHERE id = ?1", params![id])?;
         if rows == 0 {
@@ -504,7 +506,11 @@ impl Storage {
             self.conn.execute(
                 "INSERT OR IGNORE INTO item_content_hashes (item_id, content_type, value_hash)
                  VALUES (?1, ?2, ?3)",
-                params![item_id, fingerprint_type(&content.content_type), content_hash(content)],
+                params![
+                    item_id,
+                    fingerprint_type(&content.content_type),
+                    content_hash(content)
+                ],
             )?;
         }
         Ok(())
@@ -552,8 +558,7 @@ impl Storage {
             };
             let covers_all = contents.iter().all(|wanted| {
                 existing.contents.iter().any(|stored| {
-                    fingerprint_type(&stored.content_type)
-                        == fingerprint_type(&wanted.content_type)
+                    fingerprint_type(&stored.content_type) == fingerprint_type(&wanted.content_type)
                         && stored.value == wanted.value
                 })
             });

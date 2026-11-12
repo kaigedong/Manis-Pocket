@@ -76,7 +76,13 @@ impl NetworkManager {
         local_key: Keypair,
         store_path: PathBuf,
     ) -> Result<Self, ErrorCode> {
-        Self::build(command_rx, state, local_key, listen_port(), Some(store_path))
+        Self::build(
+            command_rx,
+            state,
+            local_key,
+            listen_port(),
+            Some(store_path),
+        )
     }
 
     pub fn new_with_port(
@@ -1092,7 +1098,6 @@ impl NetworkManager {
             self.reconcile_all();
         }
     }
-
 }
 
 /// Hands out a distinct value for each pairing message we publish.

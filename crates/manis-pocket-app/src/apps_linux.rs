@@ -56,9 +56,7 @@ fn load_icon(class: &str) -> Option<Arc<RenderImage>> {
     let (width, height) = decoded.dimensions();
     let buffer: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> =
         image::ImageBuffer::from_raw(width, height, decoded.into_raw())?;
-    Some(Arc::new(RenderImage::new(vec![image::Frame::new(
-        buffer,
-    )])))
+    Some(Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])))
 }
 
 /// Maps a window class to a themed icon name via the `.desktop` entries.
@@ -123,7 +121,14 @@ fn application_dirs() -> Vec<PathBuf> {
 
 /// Searches the usual theme layout for a raster icon.
 fn find_icon_file(icon: &str) -> Option<PathBuf> {
-    const THEMES: [&str; 6] = ["hicolor", "Adwaita", "Papirus", "Papirus-Dark", "breeze", "Yaru"];
+    const THEMES: [&str; 6] = [
+        "hicolor",
+        "Adwaita",
+        "Papirus",
+        "Papirus-Dark",
+        "breeze",
+        "Yaru",
+    ];
     const SIZES: [&str; 5] = ["48x48", "64x64", "128x128", "256x256", "32x32"];
 
     let mut roots: Vec<PathBuf> = Vec::new();
@@ -143,9 +148,12 @@ fn find_icon_file(icon: &str) -> Option<PathBuf> {
         .iter()
         .flat_map(|root| {
             THEMES.iter().flat_map(move |theme| {
-                SIZES
-                    .iter()
-                    .map(move |size| root.join(theme).join(size).join("apps").join(format!("{icon}.png")))
+                SIZES.iter().map(move |size| {
+                    root.join(theme)
+                        .join(size)
+                        .join("apps")
+                        .join(format!("{icon}.png"))
+                })
             })
         })
         .chain([
@@ -153,7 +161,9 @@ fn find_icon_file(icon: &str) -> Option<PathBuf> {
             PathBuf::from("/usr/share/pixmaps").join(format!("{icon}.xpm")),
         ]);
 
-    candidates.into_iter().find(|path| Path::new(path).is_file())
+    candidates
+        .into_iter()
+        .find(|path| Path::new(path).is_file())
 }
 
 #[cfg(test)]

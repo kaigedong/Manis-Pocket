@@ -299,7 +299,10 @@ impl Settings {
         raw.insert("windowWidth".into(), self.window_width.to_string());
         raw.insert("windowHeight".into(), self.window_height.to_string());
         raw.insert("syncEnabled".into(), bool_value(self.sync_enabled));
-        raw.insert("syncDiscoverable".into(), bool_value(self.sync_discoverable));
+        raw.insert(
+            "syncDiscoverable".into(),
+            bool_value(self.sync_discoverable),
+        );
         raw.insert("syncDeviceName".into(), self.sync_device_name.clone());
         raw.insert("syncDeviceID".into(), self.sync_device_id.clone());
         raw.insert("ignoredApps".into(), self.ignored_apps.join("\n"));
@@ -537,7 +540,10 @@ mod tests {
         raw.insert("historySize".into(), "42".into());
         let settings = Settings::from_raw(&raw);
         let written = settings.to_raw();
-        assert_eq!(written.get("ignoredApps").map(String::as_str), Some("Slack"));
+        assert_eq!(
+            written.get("ignoredApps").map(String::as_str),
+            Some("Slack")
+        );
         assert_eq!(written.get("historySize").map(String::as_str), Some("42"));
     }
 
@@ -550,7 +556,10 @@ mod tests {
         assert_eq!(settings.ignored_apps, vec!["com.a", "com.b"]);
         assert_eq!(settings.ignore_regexp, vec!["password"]);
         let written = settings.to_raw();
-        assert_eq!(written.get("ignoredApps").map(String::as_str), Some("com.a\ncom.b"));
+        assert_eq!(
+            written.get("ignoredApps").map(String::as_str),
+            Some("com.a\ncom.b")
+        );
     }
 
     #[test]
@@ -559,9 +568,6 @@ mod tests {
         raw.insert("quoted".into(), "a\"b\\c\nd".into());
         let text = raw.to_json();
         let parsed = RawSettings::from_json(&text).expect("parse");
-        assert_eq!(
-            parsed.get("quoted").map(String::as_str),
-            Some("a\"b\\c\nd")
-        );
+        assert_eq!(parsed.get("quoted").map(String::as_str), Some("a\"b\\c\nd"));
     }
 }

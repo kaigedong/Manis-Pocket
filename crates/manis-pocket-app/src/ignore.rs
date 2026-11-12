@@ -55,7 +55,11 @@ mod tests {
 
     #[test]
     fn nothing_is_ignored_by_default() {
-        assert!(!should_ignore(&settings(), Some("com.apple.Terminal"), "hi"));
+        assert!(!should_ignore(
+            &settings(),
+            Some("com.apple.Terminal"),
+            "hi"
+        ));
         assert!(!should_ignore(&settings(), None, "hi"));
     }
 
@@ -63,7 +67,11 @@ mod tests {
     fn listed_applications_are_ignored() {
         let mut rules = settings();
         rules.ignored_apps = vec!["com.agilebits.onepassword".into()];
-        assert!(should_ignore(&rules, Some("com.agilebits.onepassword"), "secret"));
+        assert!(should_ignore(
+            &rules,
+            Some("com.agilebits.onepassword"),
+            "secret"
+        ));
         assert!(!should_ignore(&rules, Some("com.apple.Terminal"), "hi"));
         // Unknown source is not on the ignore list.
         assert!(!should_ignore(&rules, None, "hi"));

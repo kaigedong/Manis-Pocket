@@ -7,9 +7,9 @@
 //! Linux has no equivalent (icons come from the desktop's icon theme and need the
 //! `.desktop` entry), so there the row keeps the letter badge.
 
-use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
+use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use std::sync::{Mutex, OnceLock};
 
@@ -128,9 +128,8 @@ mod macos {
         let tiff = unsafe { image.TIFFRepresentation() }?;
         let rep = NSBitmapImageRep::initWithData(NSBitmapImageRep::alloc(), &tiff)?;
         let empty = NSDictionary::new();
-        let png = unsafe {
-            rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &empty)
-        }?;
+        let png =
+            unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &empty) }?;
         let bytes = png.to_vec();
         // Decoding through the `image` crate keeps the pixel-format handling in
         // one place instead of duplicating it against AppKit.
@@ -158,7 +157,8 @@ pub fn png_to_render_image(bytes: &[u8], max_width: u32) -> Option<(Arc<RenderIm
     }
     let (width, height) = (decoded.width(), decoded.height());
     let rgba = decoded.to_rgba8();
-    let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_raw(width, height, rgba.into_raw())?;
+    let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> =
+        ImageBuffer::from_raw(width, height, rgba.into_raw())?;
     Some((
         Arc::new(RenderImage::new(vec![Frame::new(buffer)])),
         width as f32,

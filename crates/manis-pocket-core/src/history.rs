@@ -639,8 +639,12 @@ mod tests {
         )
         .unwrap();
         let blob = vec![7u8; 4096];
-        mgr.add(make_item("2", "Blob", &[("public.png", &blob)]), 1000, false)
-            .unwrap();
+        mgr.add(
+            make_item("2", "Blob", &[("public.png", &blob)]),
+            1000,
+            false,
+        )
+        .unwrap();
 
         let metadata = mgr.load_metadata().unwrap();
         assert_eq!(metadata.len(), 2);
@@ -653,9 +657,11 @@ mod tests {
         );
         // The types still come along: the list needs them to tell an image row
         // from a text row without loading the payload.
-        assert!(metadata
-            .iter()
-            .any(|item| item.contents.iter().any(|c| c.content_type == "public.png")));
+        assert!(
+            metadata
+                .iter()
+                .any(|item| item.contents.iter().any(|c| c.content_type == "public.png"))
+        );
         // Listing and search only need titles, which metadata still provides.
         assert!(metadata.iter().any(|item| item.title == "Blob"));
 
@@ -726,4 +732,3 @@ mod tests {
         assert!(mgr.load().unwrap().len() <= 3);
     }
 }
-

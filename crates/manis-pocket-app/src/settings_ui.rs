@@ -6,7 +6,9 @@
 //! the rows whose values the core already understands; panes whose features have
 //! no implementation yet say so instead of showing dead controls.
 
-use gpui::{div, px, AnyElement, App, Context, InteractiveElement, IntoElement, SharedString, Window};
+use gpui::{
+    AnyElement, App, Context, InteractiveElement, IntoElement, SharedString, Window, div, px,
+};
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::switch::Switch;
@@ -110,7 +112,6 @@ impl SettingsView {
     }
 }
 
-
 /// A labelled row whose control is a row of small segmented buttons.
 ///
 /// `set` is a plain function pointer so the same value can be captured by several
@@ -143,13 +144,15 @@ fn pick_row(
                 .hover(|style| style.bg(gpui::black().opacity(0.1)))
         };
         let value = *value;
-        picker = picker.child(button.child(*text).on_click(cx.listener(
-            move |this, _, _, cx| {
-                set(&mut this.settings, value);
-                this.save();
-                cx.notify();
-            },
-        )));
+        picker = picker.child(
+            button
+                .child(*text)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    set(&mut this.settings, value);
+                    this.save();
+                    cx.notify();
+                })),
+        );
     }
     h_flex()
         .w_full()
@@ -214,12 +217,7 @@ fn group_label(text: &'static str) -> AnyElement {
                 .text_color(gpui::black().opacity(0.45))
                 .child(text),
         )
-        .child(
-            div()
-                .w_full()
-                .h(px(1.0))
-                .bg(gpui::black().opacity(0.08)),
-        )
+        .child(div().w_full().h(px(1.0)).bg(gpui::black().opacity(0.08)))
         .into_any_element()
 }
 
@@ -263,14 +261,7 @@ impl Render for SettingsView {
             .bg(gpui::white())
             .text_color(gpui::black())
             .child(sidebar)
-            .child(
-                div()
-                    .flex_1()
-                    .h_full()
-                    .px_4()
-                    .py_3()
-                    .child(content),
-            )
+            .child(div().flex_1().h_full().px_4().py_3().child(content))
     }
 }
 
@@ -503,7 +494,9 @@ impl SettingsView {
                             .into_any_element(),
                     );
                 }
-                rows.push(note("在设置文件中编辑 ignoredApps / ignoreRegexp，每行一条"));
+                rows.push(note(
+                    "在设置文件中编辑 ignoredApps / ignoreRegexp，每行一条",
+                ));
             }
             Pane::Storage => {
                 rows.push(group_label("列表"));
@@ -531,7 +524,10 @@ impl SettingsView {
                     }),
                 ));
                 let step = |delta: i64| {
-                    move |this: &mut SettingsView, _: &gpui::ClickEvent, _: &mut Window, cx: &mut Context<SettingsView>| {
+                    move |this: &mut SettingsView,
+                          _: &gpui::ClickEvent,
+                          _: &mut Window,
+                          cx: &mut Context<SettingsView>| {
                         let next = (this.settings.history_size + delta).clamp(1, 9999);
                         this.settings.history_size = next;
                         this.save();
@@ -552,7 +548,11 @@ impl SettingsView {
                                 .child("-100")
                                 .on_click(cx.listener(step(-100))),
                         )
-                        .child(div().text_sm().child(format!("{}", self.settings.history_size)))
+                        .child(
+                            div()
+                                .text_sm()
+                                .child(format!("{}", self.settings.history_size)),
+                        )
                         .child(
                             div()
                                 .id("size-plus")
@@ -593,10 +593,7 @@ impl SettingsView {
             }
             Pane::Advanced => {
                 rows.push(note(format!("数据库：{}", self.database_path)));
-                rows.push(note(format!(
-                    "设备名：{}",
-                    self.settings.sync_device_name
-                )));
+                rows.push(note(format!("设备名：{}", self.settings.sync_device_name)));
                 rows.push(note(format!(
                     "历史上限：{}（当前库共 {} 条）",
                     self.settings.history_size,
@@ -623,7 +620,10 @@ impl SettingsView {
                 // commands are no-ops, so a toggle here would be a control that
                 // changes nothing. Say so instead of pretending.
                 rows.push(note("设备在局域网内始终可见（mDNS）"));
-                rows.push(note(format!("本机设备名：{}", self.settings.sync_device_name)));
+                rows.push(note(format!(
+                    "本机设备名：{}",
+                    self.settings.sync_device_name
+                )));
                 let peers = self.history.get_paired_peers();
                 rows.push(note(format!("已配对设备 {} 台", peers.len())));
                 for peer in &peers {

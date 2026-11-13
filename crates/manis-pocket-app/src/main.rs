@@ -14,6 +14,7 @@ mod clipboard;
 mod icons;
 mod ignore;
 mod ipc;
+mod placement;
 mod rows;
 mod settings;
 mod settings_ui;
@@ -166,7 +167,7 @@ impl ListDelegate for HistoryList {
             if let Some(bundle) = item.application.as_deref() {
                 // The real bundle icon when AppKit can supply one, otherwise a
                 // letter badge so the row still says where it came from.
-                let glyph = match icons::icon_for_bundle(bundle) {
+                let glyph = match icons::cached_icon(bundle) {
                     Some(render) => img(render)
                         .size(px(ICON_SIZE))
                         .rounded(px(3.0))
@@ -810,6 +811,22 @@ impl HistoryPanel {
         });
     }
 
+    /// Warms the app-icon cache off the paint path: a paint that asks AppKit for
+    /// an icon re-enters the list and aborts.
+    fn load_app_icons(&mut self, cx: &mut Context<Self>) {
+        let apps: Vec<String> = {
+            let delegate = self.list.read(cx).delegate();
+            delegate
+                .items
+                .iter()
+                .filter_map(|item| item.application.clone())
+                .filter(|app| !app.is_empty())
+                .collect()
+        };
+        icons::preload(apps.iter().map(String::as_str));
+        cx.notify();
+    }
+
     fn load_preview_image(&mut self, cx: &mut Context<Self>) {
         let Some(item) = self.selected_item(cx).or_else(|| {
             self.list
@@ -906,23 +923,30 @@ impl HistoryPanel {
         let mut bar = h_flex().w_full().gap_1().px_3().pb_2().items_center();
 
         for app in apps.into_iter().take(8) {
-            // Letter badge rather than the bundle icon: asking AppKit for an icon
-            // here (during paint, deferred, or preloaded at construction) left the
-            // window unpainted, so the bar stays with the row's fallback style.
-            let (initial, (red, green, blue)) = rows::app_badge(&app);
-            let icon = div()
-                .size(px(18.0))
-                .rounded(px(3.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_size(px(10.0))
-                .text_color(gpui::white())
-                .bg(gpui::rgb(
-                    (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue),
-                ))
-                .child(initial)
-                .into_any_element();
+            // The same cached bundle icon the rows draw, with the letter badge as
+            // the fallback when AppKit cannot supply one.
+            let icon = match icons::cached_icon(&app) {
+                Some(render) => img(render)
+                    .size(px(18.0))
+                    .rounded(px(4.0))
+                    .into_any_element(),
+                None => {
+                    let (initial, (red, green, blue)) = rows::app_badge(&app);
+                    div()
+                        .size(px(18.0))
+                        .rounded(px(4.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(px(10.0))
+                        .text_color(gpui::white())
+                        .bg(gpui::rgb(
+                            (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue),
+                        ))
+                        .child(initial)
+                        .into_any_element()
+                }
+            };
 
             let selected = active.as_deref() == Some(app.as_str());
             let target = app.clone();
@@ -1293,7 +1317,12 @@ fn storage_path() -> String {
 /// Where the panel appears: under the menu bar, against the right edge of the
 /// primary display. That approximates the macOS build's default strategy of
 /// dropping the panel below its status item.
-fn panel_bounds(cx: &App, panel: Size<gpui::Pixels>, settings: &Settings) -> Bounds<gpui::Pixels> {
+fn panel_bounds(
+    cx: &App,
+    panel: Size<gpui::Pixels>,
+    settings: &Settings,
+    anchor: Option<tray::TrayAnchor>,
+) -> Bounds<gpui::Pixels> {
     let Some(display) = cx.primary_display() else {
         return Bounds::centered(None, panel, cx);
     };
@@ -1309,6 +1338,13 @@ fn panel_bounds(cx: &App, panel: Size<gpui::Pixels>, settings: &Settings) -> Bou
             px(origin_y.clamp(screen.origin.y.as_f32(), max_y.as_f32())),
         )
     };
+
+    // A click on the status icon pins the panel under the icon, whatever the
+    // position setting says — that is what the SwiftUI build does.
+    if let Some(anchor) = anchor {
+        let (x, y) = placement::anchored_origin(&screen, panel, anchor, screen_scale());
+        return Bounds::new(clamp(x, y), panel);
+    }
 
     let origin = match settings.popup_position.as_str() {
         // Centred on the screen, like the macOS `.center` mode.
@@ -1331,6 +1367,23 @@ fn panel_bounds(cx: &App, panel: Size<gpui::Pixels>, settings: &Settings) -> Bou
     };
     let _ = margin;
     Bounds::new(origin, panel)
+}
+
+/// Backing scale of the main screen, so tray rectangles (physical pixels) can be
+/// turned into the logical points the layout uses.
+#[cfg(target_os = "macos")]
+fn screen_scale() -> f32 {
+    unsafe {
+        let screen = objc2_app_kit::NSScreen::mainScreen(objc2::MainThreadMarker::new_unchecked());
+        screen
+            .map(|screen| screen.backingScaleFactor() as f32)
+            .unwrap_or(2.0)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn screen_scale() -> f32 {
+    1.0
 }
 
 /// Whether a point lies inside a display's bounds.
@@ -1445,12 +1498,17 @@ fn set_panel_window(id: Option<gpui::WindowId>) {
 }
 
 fn open_panel(cx: &mut App) {
+    open_panel_at(cx, None)
+}
+
+/// Opens the panel, preferring the status icon when the click came from it.
+fn open_panel_at(cx: &mut App, anchor: Option<tray::TrayAnchor>) {
     let settings = settings::Settings::load(&storage_path());
     let panel = size(
         px(settings.window_width as f32 + PANEL_MARGIN * 2.0),
         px(settings.window_height as f32 + PANEL_MARGIN * 2.0),
     );
-    let bounds = panel_bounds(cx, panel, &settings);
+    let bounds = panel_bounds(cx, panel, &settings, anchor);
     let (handle, _) = gpui_kit::open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -1488,6 +1546,7 @@ fn open_panel(cx: &mut App) {
             window.defer(cx, move |_window, cx| {
                 handle.update(cx, |panel, cx| {
                     panel.sync_checked(cx);
+                    panel.load_app_icons(cx);
                     panel.load_preview_image(cx);
                 });
             });
@@ -1513,15 +1572,19 @@ fn open_panel_if_needed(cx: &mut App) {
 
 /// Shows the panel if it is closed, closes it if it is open.
 fn toggle_panel(cx: &mut App) {
+    toggle_panel_at(cx, None)
+}
+
+fn toggle_panel_at(cx: &mut App, anchor: Option<tray::TrayAnchor>) {
     let Some(id) = panel_window_id() else {
-        open_panel(cx);
+        open_panel_at(cx, anchor);
         return;
     };
     let ok = close_panel_window(cx, id);
     if !ok {
         // The window was already gone; forget it and open a fresh one.
         set_panel_window(None);
-        open_panel(cx);
+        open_panel_at(cx, anchor);
     }
 }
 
@@ -1749,7 +1812,9 @@ fn main() {
 
                 while let Ok(command) = tray_rx.try_recv() {
                     match command {
-                        tray::TrayCommand::Toggle => cx.update(toggle_panel),
+                        tray::TrayCommand::Toggle(anchor) => {
+                            cx.update(|cx| toggle_panel_at(cx, anchor))
+                        }
                         tray::TrayCommand::Open => cx.update(open_panel_if_needed),
                         tray::TrayCommand::Settings => cx.update(open_settings),
                         tray::TrayCommand::Quit => cx.update(|cx| cx.quit()),

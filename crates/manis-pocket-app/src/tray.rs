@@ -11,10 +11,20 @@
 
 use futures::channel::mpsc::UnboundedSender;
 
+/// Where the status icon sits, in the physical pixels the tray reports.
+///
+/// The panel opens under this rectangle when the click came from the icon, the
+/// way the SwiftUI build forces `.statusItem` for that one entry point.
+#[derive(Clone, Copy, Debug)]
+pub struct TrayAnchor {
+    pub left: f64,
+    pub bottom: f64,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum TrayCommand {
     /// Left click on the icon: show the panel, or hide it when it is already up.
-    Toggle,
+    Toggle(Option<TrayAnchor>),
     Open,
     Settings,
     Quit,
@@ -87,11 +97,19 @@ mod macos {
                 if let TrayIconEvent::Click {
                     button: MouseButton::Left,
                     button_state: MouseButtonState::Up,
+                    rect,
                     ..
                 } = event
                 {
+                    let anchor = TrayAnchor {
+                        left: rect.position.x,
+                        bottom: rect.position.y + f64::from(rect.size.height),
+                    };
                     // The panel toggles, so a second click closes it again.
-                    if click_tx.unbounded_send(TrayCommand::Toggle).is_err() {
+                    if click_tx
+                        .unbounded_send(TrayCommand::Toggle(Some(anchor)))
+                        .is_err()
+                    {
                         return;
                     }
                 }

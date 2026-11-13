@@ -16,20 +16,45 @@ use std::sync::{Mutex, OnceLock};
 use gpui_kit::RenderImage;
 
 #[cfg(target_os = "macos")]
-pub fn icon_for_bundle(bundle_id: &str) -> Option<Arc<RenderImage>> {
+fn cache() -> &'static Mutex<HashMap<String, Option<Arc<RenderImage>>>> {
     static CACHE: OnceLock<Mutex<HashMap<String, Option<Arc<RenderImage>>>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-
-    if let Some(hit) = cache.lock().ok()?.get(bundle_id) {
-        return hit.clone();
-    }
-    let icon = macos::load(bundle_id);
-    cache
-        .lock()
-        .ok()?
-        .insert(bundle_id.to_string(), icon.clone());
-    icon
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
+
+/// The icon if it has already been loaded. Safe to call while painting: asking
+/// AppKit for an icon at that point spins a nested runloop, re-enters the list
+/// and aborts with "cannot read ListState while it is already being updated".
+#[cfg(target_os = "macos")]
+pub fn cached_icon(bundle_id: &str) -> Option<Arc<RenderImage>> {
+    cache().lock().ok()?.get(bundle_id).cloned().flatten()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn cached_icon(_bundle_id: &str) -> Option<Arc<RenderImage>> {
+    None
+}
+
+/// Loads the icons for these apps and parks them in the cache, so a later paint
+/// only reads. Must be called outside the render pass.
+#[cfg(target_os = "macos")]
+pub fn preload<'a>(bundle_ids: impl IntoIterator<Item = &'a str>) {
+    for bundle_id in bundle_ids {
+        let known = cache()
+            .lock()
+            .map(|cache| cache.contains_key(bundle_id))
+            .unwrap_or(true);
+        if known {
+            continue;
+        }
+        let icon = macos::load(bundle_id);
+        if let Ok(mut cache) = cache().lock() {
+            cache.insert(bundle_id.to_string(), icon);
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn preload<'a>(_bundle_ids: impl IntoIterator<Item = &'a str>) {}
 
 #[cfg(not(target_os = "macos"))]
 pub fn icon_for_bundle(bundle_id: &str) -> Option<Arc<RenderImage>> {

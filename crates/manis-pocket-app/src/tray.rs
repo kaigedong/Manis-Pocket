@@ -13,6 +13,8 @@ use futures::channel::mpsc::UnboundedSender;
 
 #[derive(Clone, Copy, Debug)]
 pub enum TrayCommand {
+    /// Left click on the icon: show the panel, or hide it when it is already up.
+    Toggle,
     Open,
     Settings,
     Quit,
@@ -64,6 +66,9 @@ mod macos {
 
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
+            // A left click belongs to the panel; the menu is what right click is
+            // for. Without this the click only ever opened the menu.
+            .with_menu_on_left_click(false)
             .with_tooltip("Manis Pocket")
             // Menu-bar icons are monochrome on macOS, so let the system tint it.
             .with_icon_templated(icon)
@@ -74,6 +79,24 @@ mod macos {
         };
         // Dropping the TrayIcon removes the status item.
         Box::leak(Box::new(tray));
+
+        let click_tx = tx.clone();
+        std::thread::spawn(move || {
+            use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
+            while let Ok(event) = TrayIconEvent::receiver().recv() {
+                if let TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } = event
+                {
+                    // The panel toggles, so a second click closes it again.
+                    if click_tx.unbounded_send(TrayCommand::Toggle).is_err() {
+                        return;
+                    }
+                }
+            }
+        });
 
         let open_id = open_item.id().clone();
         let settings_id = settings_item.id().clone();

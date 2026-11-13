@@ -1698,6 +1698,7 @@ fn main() {
 
                 while let Ok(command) = tray_rx.try_recv() {
                     match command {
+                        tray::TrayCommand::Toggle => cx.update(toggle_panel),
                         tray::TrayCommand::Open => cx.update(open_panel_if_needed),
                         tray::TrayCommand::Settings => cx.update(open_settings),
                         tray::TrayCommand::Quit => cx.update(|cx| cx.quit()),

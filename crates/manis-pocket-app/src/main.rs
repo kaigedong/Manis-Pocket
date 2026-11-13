@@ -360,14 +360,18 @@ impl ListDelegate for HistoryList {
         let ends_pinned_block = self.pinned_count > 0
             && ix.row + 1 == self.pinned_count
             && self.pinned_count < self.items.len();
+        // `selected` also tells the list item it is the active row, which is what
+        // keeps the library's hover background from covering our blue.
         let item_element = if ends_pinned_block {
             ListItem::new(("row", ix.row))
+                .selected(selected)
                 .w_full()
                 .rounded(px(ROW_CORNER))
                 .border_b_1()
                 .border_color(gpui::rgb(0x0A84FF).opacity(0.25))
         } else {
             ListItem::new(("row", ix.row))
+                .selected(selected)
                 .w_full()
                 .rounded(px(ROW_CORNER))
         };
@@ -511,8 +515,16 @@ impl ListDelegate for HistoryList {
             return;
         }
 
-        let Some(ix) = self.selected else {
-            return;
+        // Enter copies what is highlighted; with nothing highlighted (a filter can
+        // clear it) it falls back to the first row, so the key never goes dead.
+        let ix = match self.selected {
+            Some(ix) => ix,
+            None if !self.items.is_empty() => gpui_kit::base::IndexPath {
+                section: 0,
+                row: 0,
+                column: 0,
+            },
+            None => return,
         };
         // Rows are section-relative: the pinned block shifts every index.
         let Some(item) = self.item_at(ix) else {
@@ -695,6 +707,42 @@ impl HistoryPanel {
         let list = self.list.read(cx);
         let delegate = list.delegate();
         delegate.item_at(delegate.selected?).cloned()
+    }
+
+    /// Moves the highlighted row and keeps it in view.
+    fn move_selection(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let list = self.list.clone();
+        let _ = list.update(cx, |state, cx| {
+            let count = state.delegate().items.len();
+            if count == 0 {
+                return;
+            }
+            let last = count as isize - 1;
+            let next = match state.selected_index() {
+                Some(ix) => (ix.row as isize).saturating_add(delta).clamp(0, last),
+                // No selection yet: down starts at the top, up at the bottom.
+                None if delta > 0 => 0,
+                None => last,
+            };
+            state.set_selected_index(
+                Some(gpui_kit::base::IndexPath {
+                    section: 0,
+                    row: next as usize,
+                    column: 0,
+                }),
+                window,
+                cx,
+            );
+            state.scroll_to_selected_item(window, cx);
+        });
+    }
+
+    /// Copies what the user is pointing at: the highlighted row, or the first one.
+    fn confirm_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let list = self.list.clone();
+        let _ = list.update(cx, |state, cx| {
+            state.delegate_mut().confirm(false, window, cx);
+        });
     }
 
     /// Pins or unpins the selected entry. Pins take the next free letter, which
@@ -1220,6 +1268,20 @@ impl Render for HistoryPanel {
                 }
                 if key == "escape" {
                     window.remove_window();
+                } else if key == "down" {
+                    this.move_selection(1, window, cx);
+                } else if key == "up" {
+                    this.move_selection(-1, window, cx);
+                } else if key == "pageup" {
+                    this.move_selection(-8, window, cx);
+                } else if key == "pagedown" {
+                    this.move_selection(8, window, cx);
+                } else if key == "home" {
+                    this.move_selection(isize::MIN / 2, window, cx);
+                } else if key == "end" {
+                    this.move_selection(isize::MAX / 2, window, cx);
+                } else if key == "enter" {
+                    this.confirm_selection(window, cx);
                 } else if modifiers.alt && key == "p" {
                     // ⌥P toggles the pin (`KeyboardShortcuts_pin` = option + P).
                     this.toggle_pin_selected(cx);

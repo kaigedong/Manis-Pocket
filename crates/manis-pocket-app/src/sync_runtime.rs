@@ -49,6 +49,40 @@ pub(crate) struct PendingPairing {
     pub(crate) pin: String,
 }
 
+/// What the engine last reported, so the settings window can say whether sync is
+/// actually running instead of leaving it to the log.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SyncStatus {
+    pub(crate) listening: Option<String>,
+    pub(crate) last_error: Option<String>,
+}
+
+static STATUS: Mutex<SyncStatus> = Mutex::new(SyncStatus {
+    listening: None,
+    last_error: None,
+});
+
+/// The engine's current state, as the settings window shows it.
+pub(crate) fn status() -> SyncStatus {
+    STATUS
+        .lock()
+        .map(|status| status.clone())
+        .unwrap_or_default()
+}
+
+fn remember_listening(address: &str) {
+    if let Ok(mut status) = STATUS.lock() {
+        status.listening = Some(address.to_string());
+        status.last_error = None;
+    }
+}
+
+fn remember_error(message: &str) {
+    if let Ok(mut status) = STATUS.lock() {
+        status.last_error = Some(message.to_string());
+    }
+}
+
 /// What mDNS has reported since launch. Replaced wholesale on every update so the
 /// UI always sees a consistent snapshot.
 static DISCOVERED: Mutex<Vec<DiscoveredPeer>> = Mutex::new(Vec::new());
@@ -140,6 +174,13 @@ impl std::fmt::Debug for AppObserver {
 
 impl AppObserver {
     fn notify(&self, notice: SyncNotice) {
+        // Keep the last address and error so the settings window can report the
+        // engine's state without a log.
+        match &notice {
+            SyncNotice::Listening(address) => remember_listening(address),
+            SyncNotice::Error(message) => remember_error(message),
+            _ => {}
+        }
         let _ = self.tx.unbounded_send(notice);
     }
 }
@@ -416,6 +457,24 @@ mod tests {
             discovered_peers()
                 .iter()
                 .all(|peer| peer.peer_id != peer_id)
+        );
+    }
+
+    #[test]
+    fn the_status_reports_the_last_error_until_the_engine_listens_again() {
+        remember_error("connection refused");
+        assert_eq!(
+            status().last_error.as_deref(),
+            Some("connection refused"),
+            "a failure is kept for the settings window to show"
+        );
+
+        remember_listening("/ip4/0.0.0.0/tcp/31774");
+        let status = status();
+        assert_eq!(status.listening.as_deref(), Some("/ip4/0.0.0.0/tcp/31774"));
+        assert!(
+            status.last_error.is_none(),
+            "a working listen address means the old error is stale"
         );
     }
 

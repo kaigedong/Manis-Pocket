@@ -620,6 +620,22 @@ impl SettingsView {
                     "本机设备名：{}",
                     self.settings.sync_device_name
                 )));
+                // Whether the engine is actually running, and the last thing that
+                // went wrong — otherwise a failed sync is only visible in a log.
+                let status = crate::sync_runtime::status();
+                if let Some(address) = status.listening.clone() {
+                    rows.push(note(format!("监听：{}", short_address(&address))));
+                }
+                if let Some(error) = status.last_error.clone() {
+                    rows.push(
+                        div()
+                            .text_xs()
+                            .text_color(gpui::rgb(0xB3_2600))
+                            .child(format!("最近错误：{error}"))
+                            .into_any_element(),
+                    );
+                }
+
                 // A pairing request is the one place a user has to act on a code,
                 // so it comes first and states the number plainly.
                 for pending in crate::sync_runtime::pending_pairings() {
@@ -812,5 +828,27 @@ impl SettingsView {
             .w_full()
             .child(section(self.pane.title(), rows))
             .into_any_element()
+    }
+}
+
+/// `/ip4/0.0.0.0/tcp/31774` is noise in a settings row; the port is what matters.
+fn short_address(address: &str) -> String {
+    let port = address.rsplit('/').next().unwrap_or(address);
+    if port.chars().all(|character| character.is_ascii_digit()) {
+        format!("端口 {port}")
+    } else {
+        address.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::short_address;
+
+    #[test]
+    fn a_listen_address_reads_as_a_port() {
+        assert_eq!(short_address("/ip4/0.0.0.0/tcp/31774"), "端口 31774");
+        assert_eq!(short_address("/ip6/::/tcp/31774"), "端口 31774");
+        assert_eq!(short_address("nonsense"), "nonsense");
     }
 }

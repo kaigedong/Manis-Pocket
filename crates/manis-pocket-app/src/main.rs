@@ -325,9 +325,20 @@ impl ListDelegate for HistoryList {
                             gpui::black().opacity(0.55)
                         })
                         .child("删除")
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            let _ = delete_history.delete(delete_id.clone());
-                            cx.notify();
+                        .on_click(cx.listener(move |state, _, window, cx| {
+                            // Deleting reloads the list, and this runs inside the
+                            // list's own event dispatch; wait until it is done.
+                            let history = delete_history.clone();
+                            let id = delete_id.clone();
+                            let panel = state.delegate().panel.clone();
+                            window.defer(cx, move |_window, cx| {
+                                let _ = history.delete(id.clone());
+                                if let Some(panel) =
+                                    panel.as_ref().and_then(|panel| panel.upgrade())
+                                {
+                                    let _ = panel.update(cx, |panel, cx| panel.reload(cx));
+                                }
+                            });
                         })),
                 )
                 .into_any_element()
@@ -776,7 +787,6 @@ impl HistoryPanel {
         cx.notify();
     }
 
-    /// Applications present in the history, used by the filter bar.
     /// Applications present in the history, in the order they appear in the list
     /// (most recent first). The empty string is the "unknown source" bucket the
     /// SwiftUI bar shows separately, so it is kept.

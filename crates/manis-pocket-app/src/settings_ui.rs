@@ -598,7 +598,7 @@ impl SettingsView {
                         .map(|items| items.len())
                         .unwrap_or(0)
                 )));
-                rows.push(note("文件夹 / 文件类型保存暂未实现"));
+                rows.push(note("文件按路径保存，不保存文件本身的内容"));
             }
             Pane::Sync => {
                 rows.push(switch_row(

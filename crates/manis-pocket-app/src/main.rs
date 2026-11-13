@@ -214,6 +214,16 @@ fn open_settings(cx: &mut App) {
     }
 }
 
+/// Whether the save switches let this copy into the history.
+///
+/// "保存文本" covers everything textual, files included: a file entry is the path.
+fn store_allowed(copy: &clipboard::Copy, settings: &settings::Settings) -> bool {
+    match copy {
+        clipboard::Copy::Image(_) => settings.save_images,
+        clipboard::Copy::Text(_) | clipboard::Copy::File(_) => settings.save_text,
+    }
+}
+
 /// Imports the SwiftUI build's history the first time this build runs.
 ///
 /// The old app kept its entries in a SwiftData store next to ours. Nobody notices a
@@ -705,12 +715,8 @@ fn record_clipboard_change(
         bytes.len()
     );
 
-    if matches!(copy, clipboard::Copy::Image(_)) && !settings.save_images {
-        eprintln!("[clip] image storage disabled");
-        return;
-    }
-    if matches!(copy, clipboard::Copy::File(_)) && !settings.save_text {
-        eprintln!("[clip] text storage disabled");
+    if !store_allowed(&copy, settings) {
+        eprintln!("[clip] storage disabled for this entry");
         return;
     }
 
@@ -776,6 +782,35 @@ mod import_tests {
     // `super::*` would bring in gpui's own `test` attribute and shadow the built-in
     // one, so only the two types these tests need are imported.
     use manis_pocket_core::history::HistoryManager;
+
+    #[test]
+    fn the_save_switches_gate_the_right_kinds() {
+        use crate::clipboard::Copy;
+        use crate::settings::Settings;
+
+        let settings = Settings {
+            save_text: false,
+            save_images: true,
+            ..Settings::default()
+        };
+        assert!(!crate::store_allowed(&Copy::Text("x".into()), &settings));
+        assert!(!crate::store_allowed(
+            &Copy::File("file:///a".into()),
+            &settings
+        ));
+        assert!(crate::store_allowed(&Copy::Image(vec![1, 2, 3]), &settings));
+
+        let settings = Settings {
+            save_text: true,
+            save_images: false,
+            ..Settings::default()
+        };
+        assert!(crate::store_allowed(&Copy::Text("x".into()), &settings));
+        assert!(!crate::store_allowed(
+            &Copy::Image(vec![1, 2, 3]),
+            &settings
+        ));
+    }
 
     #[test]
     fn a_missing_legacy_store_imports_nothing() {

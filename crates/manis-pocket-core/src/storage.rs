@@ -749,6 +749,54 @@ mod tests {
     use super::Storage;
 
     #[test]
+    fn swiftdata_entries_are_imported_with_their_contents() {
+        let directory = std::env::temp_dir().join(format!("manis-sd-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("temp dir");
+        let store = directory.join("default.store");
+
+        // The shape the SwiftUI build's SwiftData store has: Z_ tables, dates as
+        // seconds since 2001-01-01, and one row per clipboard representation.
+        {
+            let connection = rusqlite::Connection::open(&store).expect("create store");
+            connection
+                .execute_batch(
+                    "CREATE TABLE Z_HISTORYITEM (
+                        Z_PK INTEGER PRIMARY KEY, ZAPPLICATION TEXT, ZFIRSTCOPIEDAT REAL,
+                        ZLASTCOPIEDAT REAL, ZNUMBEROFCOPIES INTEGER, ZPIN TEXT, ZTITLE TEXT,
+                        ZSYNCID TEXT, ZSYNCTIMESTAMP REAL, ZSYNCSOURCE TEXT, ZSYNCDELETED INTEGER);
+                     CREATE TABLE Z_HISTORYITEMCONTENT (ZITEM INTEGER, ZTYPE TEXT, ZVALUE BLOB);
+                     INSERT INTO Z_HISTORYITEM VALUES
+                        (1, 'com.apple.Safari', 700000000.0, 700000100.0, 3, 'b', 'copied text',
+                         'legacy-1', 700000100.0, NULL, 0);
+                     INSERT INTO Z_HISTORYITEMCONTENT VALUES
+                        (1, 'public.utf8-plain-text', x'68656C6C6F');",
+                )
+                .expect("seed store");
+        }
+
+        let mut storage = Storage::open_in_memory().expect("open");
+        let imported = storage
+            .migrate_from_swiftdata(store.display().to_string().as_str())
+            .expect("import");
+        assert_eq!(imported, 1);
+
+        let items = storage.get_all_metadata().expect("metadata");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "copied text");
+        assert_eq!(items[0].pin.as_deref(), Some("b"));
+        assert_eq!(items[0].number_of_copies, 3);
+        // Core Data counts seconds from 2001-01-01, so 700000100 s lands in 2023.
+        assert_eq!(items[0].last_copied_at, 1_678_307_300_000);
+
+        let contents = storage.get_contents("legacy-1").expect("contents");
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0].content_type, "public.utf8-plain-text");
+        assert_eq!(contents[0].value.as_deref(), Some(&b"hello"[..]));
+
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
     fn legacy_pairs_require_fresh_confirmation() {
         let storage = Storage::open_in_memory().unwrap();
         storage

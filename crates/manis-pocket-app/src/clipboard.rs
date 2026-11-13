@@ -63,6 +63,42 @@ fn read_copy() -> Option<Copy> {
 /// that does not hold keyboard focus is not allowed to read the selection — which
 /// is exactly the state a background clipboard manager is in. `wl-paste` goes
 /// through the same protocol helper the compositor trusts, so it works.
+#[cfg(any(target_os = "linux", test))]
+/// Which of the clipboard's offered types this app should read. An image wins
+/// over everything, a file list over plain text, because a file copied in a file
+/// manager also offers its path as text and losing the identity would be worse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Offered {
+    Image,
+    FileList,
+    Text,
+}
+
+#[cfg(any(target_os = "linux", test))]
+/// Classifies a `wl-paste --list-types` listing.
+pub fn classify_offered(types: &str) -> Offered {
+    let has = |wanted: &str| types.lines().any(|line| line.trim() == wanted);
+    if has("image/png") {
+        Offered::Image
+    } else if has("text/uri-list") {
+        Offered::FileList
+    } else {
+        Offered::Text
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+/// The file URLs in a `text/uri-list` payload: one per line, with comments and
+/// blank lines dropped, as the specification allows both.
+pub fn file_uris(payload: &str) -> Vec<String> {
+    payload
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(String::from)
+        .collect()
+}
+
 #[cfg(target_os = "linux")]
 fn read_copy() -> Option<Copy> {
     use std::process::Command;
@@ -73,7 +109,8 @@ fn read_copy() -> Option<Copy> {
         return None;
     }
     let offered = String::from_utf8_lossy(&types.stdout);
-    if offered.lines().any(|line| line.trim() == "image/png") {
+    let wanted = classify_offered(&offered);
+    if wanted == Offered::Image {
         let output = Command::new("wl-paste")
             .args(["--type", "image/png", "--no-newline"])
             .output()
@@ -85,19 +122,14 @@ fn read_copy() -> Option<Copy> {
 
     // A file list arrives as `text/uri-list`; without this branch it falls
     // through to the plain-text read and is stored as a string of URLs.
-    if offered.lines().any(|line| line.trim() == "text/uri-list") {
+    if wanted == Offered::FileList {
         let output = Command::new("wl-paste")
             .args(["--type", "text/uri-list", "--no-newline"])
             .output()
             .ok()?;
-        let uris = String::from_utf8(output.stdout).ok()?;
-        let joined: Vec<&str> = uris
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .collect();
-        if !joined.is_empty() {
-            return Some(Copy::File(joined.join("\n")));
+        let uris = file_uris(&String::from_utf8(output.stdout).ok()?);
+        if !uris.is_empty() {
+            return Some(Copy::File(uris.join("\n")));
         }
     }
 
@@ -361,4 +393,41 @@ pub fn paste_into_frontmost() -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_image_beats_a_file_list_and_text() {
+        let offered = "text/plain\ntext/uri-list\nimage/png\n";
+        assert_eq!(classify_offered(offered), Offered::Image);
+    }
+
+    #[test]
+    fn a_file_list_beats_plain_text() {
+        assert_eq!(
+            classify_offered("text/plain\ntext/uri-list"),
+            Offered::FileList
+        );
+    }
+
+    #[test]
+    fn anything_else_is_read_as_text() {
+        assert_eq!(classify_offered("text/html"), Offered::Text);
+        assert_eq!(classify_offered(""), Offered::Text);
+    }
+
+    #[test]
+    fn a_type_list_tolerates_stray_whitespace() {
+        assert_eq!(classify_offered("  image/png  \r\n"), Offered::Image);
+    }
+
+    #[test]
+    fn file_uris_drop_comments_and_blank_lines() {
+        let payload = "# copied from finder\nfile:///a.txt\r\n\nfile:///b.txt\n";
+        assert_eq!(file_uris(payload), vec!["file:///a.txt", "file:///b.txt"]);
+        assert!(file_uris("# only a comment\n").is_empty());
+    }
 }

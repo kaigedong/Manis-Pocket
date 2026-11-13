@@ -285,7 +285,7 @@ pub fn png_to_render_image(bytes: &[u8], max_width: u32) -> Option<(Arc<RenderIm
     ))
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 

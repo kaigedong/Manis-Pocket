@@ -241,6 +241,13 @@ impl HistoryManager {
             .count_items()
     }
 
+    /// Imports the history of the SwiftUI build, which kept it in a SwiftData
+    /// store. Callers should treat a failure as advisory: a store written by a
+    /// different schema must not stop the app from starting.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the store cannot be opened, or when its tables
+    /// are not the ones the SwiftUI build wrote.
     pub fn migrate_from_swiftdata(&self, swiftdata_path: String) -> Result<u64, CoreError> {
         self.storage
             .lock()

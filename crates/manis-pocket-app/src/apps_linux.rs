@@ -90,10 +90,8 @@ fn icon_name_for_class(class: &str) -> Option<String> {
                     matches |= value.trim().to_lowercase() == wanted;
                 }
             }
-            if matches {
-                if let Some(icon) = icon.filter(|icon| !icon.is_empty()) {
-                    return Some(icon);
-                }
+            if matches && let Some(icon) = icon.filter(|icon| !icon.is_empty()) {
+                return Some(icon);
             }
         }
     }

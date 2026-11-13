@@ -194,6 +194,33 @@ fn open_settings(cx: &mut App) {
     }
 }
 
+/// Imports the SwiftUI build's history the first time this build runs.
+///
+/// The old app kept its entries in a SwiftData store next to ours. Nobody notices a
+/// successful import, and a failed one — a different schema, a half-written file —
+/// must not stop the app from starting, so it is reported and ignored.
+fn import_legacy_history(history: &HistoryManager) {
+    if history.count().unwrap_or(1) > 0 {
+        return;
+    }
+    let Some(store) = legacy_swiftdata_path() else {
+        return;
+    };
+    match history.migrate_from_swiftdata(store.clone()) {
+        Ok(0) => {}
+        Ok(count) => eprintln!("imported {count} entries from {store}"),
+        Err(error) => eprintln!("could not import {store}: {error}"),
+    }
+}
+
+/// Where the SwiftUI build kept its SwiftData store, if it is there.
+fn legacy_swiftdata_path() -> Option<String> {
+    let home = std::env::var("HOME").ok()?;
+    let path =
+        std::path::Path::new(&home).join("Library/Application Support/ManisPocket/default.store");
+    path.exists().then(|| path.display().to_string())
+}
+
 /// Opens the history panel. Called at launch and by the global shortcut.
 /// Id of the panel window while it exists.
 ///
@@ -479,6 +506,7 @@ fn main() {
 
     let shared_history =
         Arc::new(HistoryManager::new(storage_path()).expect("open history database"));
+    import_legacy_history(&shared_history);
     let _ = HISTORY.set(shared_history);
 
     gpui_kit::application()
@@ -731,4 +759,32 @@ fn action_icon_button(
         )
         .on_click(handler)
         .into_any_element()
+}
+
+#[cfg(test)]
+mod import_tests {
+    // `super::*` would bring in gpui's own `test` attribute and shadow the built-in
+    // one, so only the two types these tests need are imported.
+    use manis_pocket_core::history::HistoryManager;
+
+    #[test]
+    fn a_missing_legacy_store_imports_nothing() {
+        let history = HistoryManager::new(":memory:".to_string()).expect("open");
+        let imported = history
+            .migrate_from_swiftdata("/nonexistent/default.store".to_string())
+            .expect("a missing store is not an error");
+        assert_eq!(imported, 0);
+    }
+
+    #[test]
+    fn a_store_that_is_not_sqlite_reports_an_error() {
+        let directory = std::env::temp_dir().join(format!("manis-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("temp dir");
+        let path = directory.join("broken.store");
+        std::fs::write(&path, b"this is not a database").expect("write");
+        let history = HistoryManager::new(":memory:".to_string()).expect("open");
+        let result = history.migrate_from_swiftdata(path.display().to_string());
+        assert!(result.is_err(), "a broken store must be reported");
+        let _ = std::fs::remove_dir_all(&directory);
+    }
 }

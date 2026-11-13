@@ -200,29 +200,8 @@ impl ListDelegate for HistoryList {
             row = row.child(div().w(px(10.0)));
         }
 
-        // Pin letter at the start of the row: the list item is content-sized, so a
-        // trailing hint would overlap the title instead of sitting at the edge.
-        if let Some(pin) = item.pin.clone() {
-            row = row
-                .child(
-                    div()
-                        .px_1()
-                        .rounded(px(3.0))
-                        .bg(if selected {
-                            gpui::rgb(0xFF_FFFF).opacity(0.22)
-                        } else {
-                            gpui::rgb(0x0A84FF).opacity(0.14)
-                        })
-                        .text_size(px(10.0))
-                        .text_color(if selected {
-                            gpui::rgb(0xFF_FFFF)
-                        } else {
-                            gpui::rgb(0x0A84FF)
-                        })
-                        .child(SharedString::from(pin)),
-                )
-                .child(div().w(px(5.0)));
-        }
+        // A pinned row is marked with the dot at the right; the letter that used
+        // to sit here only existed for its shortcut, which is gone.
 
         // A colour swatch before the title when the copied text is a colour.
         if let Some((red, green, blue)) = rows::hex_color(&title) {
@@ -361,30 +340,23 @@ impl ListDelegate for HistoryList {
                 .text_color(gpui::white())
                 .child(SharedString::from(format!("{order}")))
                 .into_any_element()
-        } else if let Some(pin) = item.pin.clone() {
+        } else if item.pin.is_some() {
+            // A pinned row is marked with a dot; the shortcut hints are gone, so
+            // the letter itself would only be noise.
             div()
                 .flex_shrink_0()
-                .text_size(px(10.0))
-                .text_color(if selected {
-                    gpui::white().opacity(0.75)
+                .size(px(6.0))
+                .rounded_full()
+                .bg(if selected {
+                    gpui::rgba(0xFFFF_FFD9)
                 } else {
-                    gpui::black().opacity(0.35)
+                    gpui::rgb(SELECTION_ACCENT).opacity(0.75)
                 })
-                // Show the modifier: a bare letter would read as "type e".
-                .child(SharedString::from(format!("⌘{pin}")))
                 .into_any_element()
         } else {
-            div()
-                .flex_shrink_0()
-                .text_size(px(10.0))
-                .text_color(if selected {
-                    gpui::white().opacity(0.6)
-                } else {
-                    gpui::black().opacity(0.3)
-                })
-                .child(SharedString::from(format!("⌘{}", ix.row + 1)))
-                .into_any_element()
+            div().flex_shrink_0().into_any_element()
         };
+
         // Hovering swaps buttons in for the hint; a fixed box keeps the row from
         // changing size under the pointer.
         let trailing = div()
@@ -721,44 +693,6 @@ impl HistoryPanel {
         let list = self.list.read(cx);
         let delegate = list.delegate();
         delegate.item_at(delegate.selected?).cloned()
-    }
-
-    /// Copies the row whose hint matches `pressed` — a pinned item's letter, or
-    /// the row number shown for the first nine entries.
-    fn copy_by_hint(&mut self, pressed: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.hint_target(pressed, cx) else {
-            return;
-        };
-        if copy_entry_to_clipboard(&self.history, &id) {
-            window.remove_window();
-        }
-    }
-
-    /// The entry a pressed hint refers to, if any.
-    fn hint_target(&self, pressed: &str, cx: &Context<Self>) -> Option<String> {
-        let items = self.list.read(cx).delegate().items.clone();
-        items
-            .iter()
-            .enumerate()
-            .find(|(index, item)| rows::hint_matches(pressed, item.pin.as_deref(), *index))
-            .map(|(_, item)| item.id.clone())
-    }
-
-    /// Copies the entry whose hint matches, then pastes it into the frontmost app.
-    fn paste_by_hint(&mut self, pressed: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.hint_target(pressed, cx) else {
-            return;
-        };
-        if !copy_entry_to_clipboard(&self.history, &id) {
-            return;
-        }
-        window.remove_window();
-        std::thread::spawn(|| {
-            // The target app reads the clipboard on paste; a short pause keeps
-            // the keystroke from arriving before the clipboard is readable.
-            std::thread::sleep(std::time::Duration::from_millis(150));
-            crate::clipboard::paste_into_frontmost();
-        });
     }
 
     /// Pins or unpins the selected entry. Pins take the next free letter, which
@@ -1305,20 +1239,6 @@ impl Render for HistoryPanel {
                 } else if modifiers.alt && (key == "backspace" || key == "delete") {
                     // ⌥⌫ deletes (`KeyboardShortcuts_delete` = option + delete).
                     this.delete_selected(cx);
-                } else if modifiers.platform
-                    && !modifiers.alt
-                    && !modifiers.control
-                    && key.len() == 1
-                {
-                    // ⌘ + the row's hint: a pinned item's letter, or the number
-                    // the first nine rows show.
-                    this.copy_by_hint(key, window, cx);
-                } else if modifiers.alt && !modifiers.platform && !modifiers.control && key.len() == 1
-                {
-                    // ⌥ + the hint pastes instead of copying, as in the SwiftUI
-                    // build where the letter is the same and the modifier picks
-                    // the action.
-                    this.paste_by_hint(key, window, cx);
                 }
             }))
             // Room for the card's shadow; the window itself is transparent so

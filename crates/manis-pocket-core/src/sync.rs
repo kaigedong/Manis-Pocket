@@ -513,7 +513,6 @@ impl SyncEngine {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::SyncEngine;
     use crate::model::{ClipboardContent, ClipboardItem};

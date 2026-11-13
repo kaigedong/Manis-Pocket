@@ -745,7 +745,6 @@ fn content_hash(content: &ClipboardContent) -> String {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::Storage;
 

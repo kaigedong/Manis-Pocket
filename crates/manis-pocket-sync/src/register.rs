@@ -269,7 +269,6 @@ pub fn is_valid(update: &ClipboardUpdate) -> bool {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
 

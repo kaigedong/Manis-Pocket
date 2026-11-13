@@ -277,7 +277,6 @@ mod linux {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     /// The four menu-bar glyphs are committed PNGs, so a rename or a bad export
     /// would only show up as a missing tray icon at runtime.

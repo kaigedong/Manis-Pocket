@@ -232,7 +232,6 @@ pub fn start(
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
     use manis_pocket_core::model::ClipboardContent;

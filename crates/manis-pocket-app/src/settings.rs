@@ -131,12 +131,19 @@ impl Settings {
         settings
     }
 
+    /// Writes the settings file. Failures are reported rather than returned: a
+    /// toggle that cannot be persisted should say so, not pretend it worked.
     pub fn save(&self, database_path: &str) {
         let path = settings_path(database_path);
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+        if let Some(parent) = path.parent()
+            && let Err(error) = std::fs::create_dir_all(parent)
+        {
+            eprintln!("could not create the settings directory: {error}");
+            return;
         }
-        let _ = std::fs::write(&path, self.to_raw().to_json());
+        if let Err(error) = std::fs::write(&path, self.to_raw().to_json()) {
+            eprintln!("could not write {}: {error}", path.display());
+        }
     }
 
     /// Applies values in the Swift build's own types (`1`/`0`, decimal numbers,
@@ -145,8 +152,10 @@ impl Settings {
         let mut settings = Self::default();
         let get = |key: &str| raw.get(key).map(String::as_str);
 
-        if let Some(value) = get("historySize").and_then(|value| value.parse().ok()) {
-            settings.history_size = value;
+        if let Some(value) = get("historySize") {
+            // A limit of zero or less would empty the history on every copy; the
+            // file is user-editable, so the floor lives here rather than in the UI.
+            settings.history_size = value.parse::<i64>().map_or(500, |size| size.max(1));
         }
         if let Some(value) = get("isUnlimitedHistory") {
             settings.unlimited_history = truthy(value);
@@ -526,7 +535,6 @@ fn macos_defaults() -> Option<RawSettings> {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -582,6 +590,28 @@ mod tests {
             written.get("ignoredApps").map(String::as_str),
             Some("com.a\ncom.b")
         );
+    }
+
+    #[test]
+    fn a_history_limit_below_one_stays_usable() {
+        for text in ["0", "-5", "not a number"] {
+            let mut raw = RawSettings::new();
+            raw.insert("historySize".into(), text.into());
+            let settings = Settings::from_raw(&raw);
+            assert!(
+                settings.history_size >= 1,
+                "historySize {text} became {}",
+                settings.history_size
+            );
+        }
+    }
+
+    #[test]
+    fn a_damaged_file_falls_back_to_the_defaults() {
+        let parsed = RawSettings::from_json("{\"historySize\": \"42\", \"trunc");
+        assert!(parsed.is_some());
+        let settings = Settings::from_raw(&parsed.unwrap_or_default());
+        assert_eq!(settings.window_width, 450.0);
     }
 
     #[test]

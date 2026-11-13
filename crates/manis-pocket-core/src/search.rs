@@ -164,7 +164,6 @@ fn char_indices_to_ranges(indices: &[usize]) -> Vec<MatchRange> {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::ClipboardContent;

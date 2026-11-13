@@ -446,7 +446,12 @@ impl HistoryManager {
     /// Get all paired peers with their metadata (ID, name, admin status, online status).
     /// Returns JSON strings — each is `{"peerId":..., "displayName":..., "isAdmin":..., "isOnline":...}`.
     pub fn get_paired_peers(&self) -> Vec<String> {
-        let storage = self.storage.lock().unwrap();
+        // The storage behind the lock is plain SQLite state, so a poisoned lock is
+        // still safe to read; taking the app down over it would lose the session.
+        let storage = self
+            .storage
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let db_peers = storage.get_paired_peers().unwrap_or_default();
         // Online status comes from live NetworkManager state, not cached DB column
         drop(storage);
@@ -514,7 +519,6 @@ fn is_transient(content_type: &str) -> bool {
     )
 }
 
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

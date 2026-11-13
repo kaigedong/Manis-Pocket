@@ -33,7 +33,6 @@ pub fn sort_items(
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
 

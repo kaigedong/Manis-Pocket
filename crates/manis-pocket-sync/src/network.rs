@@ -1258,7 +1258,6 @@ fn parse_host_port_to_multiaddr(input: &str) -> String {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;

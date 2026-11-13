@@ -424,7 +424,6 @@ pub fn relative_time(timestamp_ms: i64, now_ms: i64) -> String {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -574,6 +573,22 @@ mod tests {
             "lastCopiedAt",
         );
         assert_eq!(bottom.pinned_count, 0);
+    }
+
+    #[test]
+    fn pins_can_sit_at_the_bottom_instead() {
+        let mut pinned = item("kept", &["public.utf8-plain-text"]);
+        pinned.pin = Some("b".into());
+        let recent = item("recent", &["public.utf8-plain-text"]);
+        let arranged = arrange(vec![recent, pinned], "bottom", "lastCopiedAt");
+        let titles: Vec<&str> = arranged
+            .items
+            .iter()
+            .map(|row| row.title.as_str())
+            .collect();
+        assert_eq!(titles, vec!["recent", "kept"]);
+        // Nothing is pinned at the top, so the panel draws no divider.
+        assert_eq!(arranged.pinned_count, 0);
     }
 
     #[test]

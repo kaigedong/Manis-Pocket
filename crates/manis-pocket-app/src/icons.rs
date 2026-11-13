@@ -49,7 +49,7 @@ pub fn preload<'a>(bundle_ids: impl IntoIterator<Item = &'a str>) {
 /// The platform's icon lookup: AppKit on macOS, the icon theme on Linux.
 #[cfg(target_os = "macos")]
 fn load(bundle_id: &str) -> Option<Arc<RenderImage>> {
-    macos::load(bundle_id)
+    macos::load_scaled(bundle_id, ICON_TEXTURE_SIZE).map(|(image, _, _)| image)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -188,6 +188,10 @@ pub fn frontmost_bundle_id() -> Option<String> {
     Some(identifier?.to_string())
 }
 
+/// The texture size an app icon decodes to. Rows draw them at `ICON_SIZE`; 64
+/// covers a 2x display without keeping the 1024 px artwork in memory.
+const ICON_TEXTURE_SIZE: u32 = 64;
+
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;
@@ -207,7 +211,8 @@ mod macos {
         Some(name.to_string())
     }
 
-    pub fn load(bundle_id: &str) -> Option<Arc<RenderImage>> {
+    /// Decodes the icon, scaled down to at most `max` pixels on its longest side.
+    pub fn load_scaled(bundle_id: &str, max: u32) -> Option<(Arc<RenderImage>, f32, f32)> {
         let workspace = unsafe { NSWorkspace::sharedWorkspace() };
         let identifier = NSString::from_str(bundle_id);
         let url = unsafe { workspace.URLForApplicationWithBundleIdentifier(&identifier) }?;
@@ -229,14 +234,14 @@ mod macos {
         // that in one pass to 15 px samples far too few pixels and the icons turn
         // to mush, so halve repeatedly with a good filter first.
         let mut decoded = image::load_from_memory(&bytes).ok()?;
-        if decoded.width() > 64 {
-            // A box filter down to 128 px is cheap and averages every source
-            // pixel; one Lanczos pass then finishes at 64. Repeated Lanczos
-            // passes looked fine but took seconds across a whole menu bar.
-            decoded = decoded.thumbnail(128, 128);
-            if decoded.width() > 64 {
-                let scale = 64.0 / f64::from(decoded.width());
-                let width = 64u32;
+        if decoded.width() > max {
+            // A box filter down to twice the target is cheap and averages every
+            // source pixel; one Lanczos pass then finishes the job. Repeated
+            // Lanczos passes looked fine but took seconds across a menu bar.
+            decoded = decoded.thumbnail(max * 2, max * 2);
+            if decoded.width() > max {
+                let scale = f64::from(max) / f64::from(decoded.width());
+                let width = max;
                 let height = (f64::from(decoded.height()) * scale).round().max(1.0) as u32;
                 decoded =
                     decoded.resize_exact(width, height, image::imageops::FilterType::Lanczos3);
@@ -246,7 +251,11 @@ mod macos {
         let (width, height) = decoded.dimensions();
         let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> =
             ImageBuffer::from_raw(width, height, decoded.into_raw())?;
-        Some(Arc::new(RenderImage::new(vec![Frame::new(buffer)])))
+        Some((
+            Arc::new(RenderImage::new(vec![Frame::new(buffer)])),
+            width as f32,
+            height as f32,
+        ))
     }
 }
 
@@ -273,4 +282,33 @@ pub fn png_to_render_image(bytes: &[u8], max_width: u32) -> Option<(Arc<RenderIm
         width as f32,
         height as f32,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The pipeline must hand the renderer a small texture: the artwork arrives at
+    /// 1024 px and a row draws it at 15, so anything larger is wasted VRAM and a
+    /// blurrier result, since the downscale then happens per frame.
+    #[test]
+    fn an_app_icon_is_decoded_at_the_size_the_rows_draw_it() {
+        let Some((image, width, height)) =
+            macos::load_scaled("com.apple.Safari", ICON_TEXTURE_SIZE)
+        else {
+            // A headless test machine may have no Safari installed.
+            return;
+        };
+        assert!(width <= ICON_TEXTURE_SIZE as f32, "width was {width}");
+        assert!(height <= ICON_TEXTURE_SIZE as f32, "height was {height}");
+        let decoded = image.size(0);
+        assert!(decoded.width.0 <= ICON_TEXTURE_SIZE as i32);
+    }
+
+    /// A bundle id that resolves to nothing yields no icon, so the row falls back
+    /// to its letter badge instead of drawing a placeholder.
+    #[test]
+    fn an_unknown_bundle_has_no_icon() {
+        assert!(macos::load_scaled("com.example.not-an-installed-app", 64).is_none());
+    }
 }

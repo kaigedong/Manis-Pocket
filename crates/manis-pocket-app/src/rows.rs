@@ -422,6 +422,17 @@ pub fn relative_time(timestamp_ms: i64, now_ms: i64) -> String {
     }
 }
 
+/// Whether a pressed key selects this row: a pinned item answers to its letter,
+/// the first nine rows answer to their number.
+pub fn hint_matches(pressed: &str, pin: Option<&str>, index: usize) -> bool {
+    if let Some(pin) = pin {
+        if pin.eq_ignore_ascii_case(pressed) {
+            return true;
+        }
+    }
+    index < 9 && pressed == (index + 1).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -706,5 +717,30 @@ mod tests {
         text.application = Some("com.apple.Terminal".into());
         text.last_copied_at = 999_000;
         assert_eq!(row_meta(&text, 1_000_000), "Terminal  刚刚");
+    }
+}
+
+#[cfg(test)]
+mod hint_tests {
+    use super::hint_matches;
+
+    #[test]
+    fn a_pin_answers_to_its_letter() {
+        assert!(hint_matches("e", Some("e"), 4));
+        assert!(hint_matches("E", Some("e"), 4));
+        assert!(!hint_matches("o", Some("e"), 4));
+    }
+
+    #[test]
+    fn the_first_nine_rows_answer_to_their_number() {
+        assert!(hint_matches("1", None, 0));
+        assert!(hint_matches("9", None, 8));
+        assert!(!hint_matches("9", None, 9));
+        assert!(!hint_matches("0", None, 0));
+    }
+
+    #[test]
+    fn an_unpinned_row_past_nine_has_no_hint() {
+        assert!(!hint_matches("a", None, 10));
     }
 }

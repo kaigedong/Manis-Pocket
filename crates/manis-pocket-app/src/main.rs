@@ -711,6 +711,28 @@ impl HistoryPanel {
         delegate.item_at(delegate.selected?).cloned()
     }
 
+    /// Copies the row whose hint matches `pressed` — a pinned item's letter, or
+    /// the row number shown for the first nine entries.
+    fn copy_by_hint(&mut self, pressed: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let id = {
+            let items = self.list.read(cx).delegate().items.clone();
+            let mut found = None;
+            for (index, item) in items.iter().enumerate() {
+                if rows::hint_matches(pressed, item.pin.as_deref(), index) {
+                    found = Some(item.id.clone());
+                    break;
+                }
+            }
+            found
+        };
+        let Some(id) = id else {
+            return;
+        };
+        if copy_entry_to_clipboard(&self.history, &id) {
+            window.remove_window();
+        }
+    }
+
     /// Pins or unpins the selected entry. Pins take the next free letter, which
     /// is what the row shows on its right.
     fn toggle_pin_selected(&mut self, cx: &mut Context<Self>) {
@@ -1256,6 +1278,27 @@ impl Render for HistoryPanel {
                 } else if modifiers.alt && (key == "backspace" || key == "delete") {
                     // ⌥⌫ deletes (`KeyboardShortcuts_delete` = option + delete).
                     this.delete_selected(cx);
+                } else if modifiers.platform
+                    && !modifiers.alt
+                    && !modifiers.control
+                    && key.len() == 1
+                    && key.as_bytes()[0].is_ascii_digit()
+                {
+                    // ⌘N copies the entry the row hints at.
+                    if let Some(index) = key.parse::<usize>().ok().filter(|n| (1..=9).contains(n)) {
+                        this.copy_by_hint(&(index - 1).to_string(), window, cx);
+                    }
+                } else if !modifiers.platform && !modifiers.alt && !modifiers.control {
+                    // The SwiftUI build copies the entry whose hint matches the
+                    // pressed key, so a pinned item's letter is a direct shortcut.
+                    // Only while the search box is idle — otherwise typing a
+                    // query would copy and close the panel.
+                    let typing = this.input.read(cx).focus_handle(cx).is_focused(window);
+                    if !typing {
+                        if let Some(character) = event.keystroke.key_char.clone() {
+                            this.copy_by_hint(&character, window, cx);
+                        }
+                    }
                 }
             }))
             // Room for the card's shadow; the window itself is transparent so

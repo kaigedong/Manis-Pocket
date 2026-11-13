@@ -218,6 +218,7 @@ pub struct FileChunk {
 }
 
 #[cfg(test)]
+#[cfg(test)]
 mod tests {
     use super::*;
 

@@ -28,6 +28,7 @@ pub fn anchored_origin(
 }
 
 #[cfg(test)]
+#[cfg(test)]
 mod tests {
     use super::*;
     use gpui_kit::{point, px};

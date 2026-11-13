@@ -432,13 +432,13 @@ impl JsonMap for RawSettings {
 
     fn from_json(text: &str) -> Option<Self> {
         let mut map = RawSettings::new();
-        let mut chars = text.chars().peekable();
+        let chars = text.chars().peekable();
         let mut key: Option<String> = None;
         let mut buffer = String::new();
         let mut in_string = false;
         let mut escaped = false;
 
-        while let Some(character) = chars.next() {
+        for character in chars {
             if in_string {
                 if escaped {
                     // Escapes are limited to what `quote` emits.
@@ -525,6 +525,7 @@ fn macos_defaults() -> Option<RawSettings> {
     Some(raw)
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

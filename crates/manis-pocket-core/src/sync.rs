@@ -22,43 +22,6 @@ pub struct SyncEngine {
     connected_peers: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::SyncEngine;
-    use crate::model::{ClipboardContent, ClipboardItem};
-
-    #[test]
-    fn wire_item_contains_only_portable_text() {
-        let item = ClipboardItem {
-            id: "test-id".into(),
-            application: None,
-            first_copied_at: 1_700_000_000_000,
-            last_copied_at: 1_700_000_000_000,
-            number_of_copies: 1,
-            pin: None,
-            title: "hello".into(),
-            contents: vec![
-                ClipboardContent {
-                    content_type: "public.file-url".into(),
-                    value: Some(b"file:///private/path".to_vec()),
-                },
-                ClipboardContent {
-                    content_type: "public.utf8-plain-text".into(),
-                    value: Some(b"hello".to_vec()),
-                },
-            ],
-            sync_timestamp: 1_700_000_000_000,
-            sync_source: None,
-            sync_deleted: false,
-        };
-        let json = SyncEngine::serialize_item(&item).unwrap();
-        let wire: manis_pocket_sync::SyncItem = serde_json::from_str(&json).unwrap();
-        assert_eq!(wire.contents.len(), 1);
-        assert_eq!(wire.contents[0].content_type, "text/plain;charset=utf-8");
-        assert!(!json.contains("private/path"));
-    }
-}
-
 impl SyncEngine {
     /// Create and start the sync engine.
     /// Spawns a background thread with its own tokio runtime for the libp2p network.
@@ -546,5 +509,43 @@ impl SyncEngine {
         chrono::DateTime::parse_from_rfc3339(s)
             .map(|dt| dt.timestamp_millis())
             .unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+#[cfg(test)]
+mod tests {
+    use super::SyncEngine;
+    use crate::model::{ClipboardContent, ClipboardItem};
+
+    #[test]
+    fn wire_item_contains_only_portable_text() {
+        let item = ClipboardItem {
+            id: "test-id".into(),
+            application: None,
+            first_copied_at: 1_700_000_000_000,
+            last_copied_at: 1_700_000_000_000,
+            number_of_copies: 1,
+            pin: None,
+            title: "hello".into(),
+            contents: vec![
+                ClipboardContent {
+                    content_type: "public.file-url".into(),
+                    value: Some(b"file:///private/path".to_vec()),
+                },
+                ClipboardContent {
+                    content_type: "public.utf8-plain-text".into(),
+                    value: Some(b"hello".to_vec()),
+                },
+            ],
+            sync_timestamp: 1_700_000_000_000,
+            sync_source: None,
+            sync_deleted: false,
+        };
+        let json = SyncEngine::serialize_item(&item).unwrap();
+        let wire: manis_pocket_sync::SyncItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(wire.contents.len(), 1);
+        assert_eq!(wire.contents[0].content_type, "text/plain;charset=utf-8");
+        assert!(!json.contains("private/path"));
     }
 }

@@ -33,9 +33,9 @@ pub fn sort_items(
 }
 
 #[cfg(test)]
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::ClipboardContent;
 
     fn make_item(id: &str, last: i64, first: i64, copies: i32, pin: Option<&str>) -> ClipboardItem {
         ClipboardItem {

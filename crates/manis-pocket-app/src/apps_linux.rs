@@ -167,6 +167,7 @@ fn find_icon_file(icon: &str) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
+#[cfg(test)]
 mod tests {
     use super::*;
 

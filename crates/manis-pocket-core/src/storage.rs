@@ -8,30 +8,6 @@ pub struct Storage {
     conn: Connection,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::Storage;
-
-    #[test]
-    fn legacy_pairs_require_fresh_confirmation() {
-        let storage = Storage::open_in_memory().unwrap();
-        storage
-            .conn
-            .execute(
-                "INSERT INTO sync_pairs (peer_id, display_name, is_admin, protocol_version) VALUES ('legacy', 'Old device', 1, 1)",
-                [],
-            )
-            .unwrap();
-        assert!(storage.get_paired_peers().unwrap().is_empty());
-
-        storage
-            .save_paired_peer("legacy", "New device", true)
-            .unwrap();
-        let pairs = storage.get_paired_peers().unwrap();
-        assert_eq!(pairs, vec![("legacy".into(), "New device".into(), true)]);
-    }
-}
-
 impl Storage {
     pub fn open(path: &str) -> Result<Self, CoreError> {
         let conn = if path.is_empty() || path == ":memory:" {
@@ -635,7 +611,7 @@ impl Storage {
                 let pk: i64 = row.get(0)?;
                 let pin_val: Option<String> = row.get(5)?;
                 // If pin is empty string, treat as None
-                let pin = pin_val.and_then(|p| if p.is_empty() { None } else { Some(p) });
+                let pin = pin_val.filter(|p| !p.is_empty());
 
                 Ok((
                     pk,
@@ -766,4 +742,29 @@ fn content_hash(content: &ClipboardContent) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+#[cfg(test)]
+#[cfg(test)]
+mod tests {
+    use super::Storage;
+
+    #[test]
+    fn legacy_pairs_require_fresh_confirmation() {
+        let storage = Storage::open_in_memory().unwrap();
+        storage
+            .conn
+            .execute(
+                "INSERT INTO sync_pairs (peer_id, display_name, is_admin, protocol_version) VALUES ('legacy', 'Old device', 1, 1)",
+                [],
+            )
+            .unwrap();
+        assert!(storage.get_paired_peers().unwrap().is_empty());
+
+        storage
+            .save_paired_peer("legacy", "New device", true)
+            .unwrap();
+        let pairs = storage.get_paired_peers().unwrap();
+        assert_eq!(pairs, vec![("legacy".into(), "New device".into(), true)]);
+    }
 }

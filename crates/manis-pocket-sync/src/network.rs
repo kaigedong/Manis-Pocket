@@ -1,3 +1,8 @@
+// The `NetworkBehaviour` derive expands to a match with an unreachable arm. The
+// warning is raised inside macro-generated code that we cannot annotate, so it is
+// silenced for this file rather than left to look like a real defect.
+#![allow(unreachable_code)]
+
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -16,11 +21,20 @@ use tokio::sync::mpsc;
 use crate::error::ErrorCode;
 use crate::register::{self, ClipboardRegister, ClipboardUpdate, ClipboardValue, MergeResult};
 use crate::state::{SharedState, SyncCommand};
-use crate::types::*;
+use crate::types::{
+    ApplyStatus, CLIPBOARD_PROTOCOL, ClipboardRequest, ClipboardResponse, FILE_TRANSFER_PROTOCOL,
+    FileChunk, FileRequest, LISTEN_PORT, PAIRING_PROTOCOL, PairingMessage, PeerInfo, SyncEvent,
+    SyncItem, SyncItemContent,
+};
 
 const PAIRING_TOPIC: &str = "manis-pocket-sync-pairing-v2";
 const PAIRING_TIMEOUT: Duration = Duration::from_secs(300);
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Images travel inside `Apply` requests, so the codec ceiling sits above the
+/// 1 MiB default: a 10 MiB PNG becomes ~13.3 MiB of base64, and 20 MiB leaves room
+/// for the envelope and the CBOR framing.
+const MAX_CLIPBOARD_MESSAGE_BYTES: u64 = 20 * 1024 * 1024;
 
 struct PendingPairing {
     session_id: String,
@@ -56,12 +70,17 @@ pub struct NetworkManager {
     recent_confirms: Vec<(PeerId, String, Instant)>,
     listen_port: u16,
     local_peer_id: PeerId,
-    /// IP:port strings of our own listen addresses (collected from NewListenAddr).
+    /// IP:port strings of our own listen addresses (collected from `NewListenAddr`).
     /// Used to avoid dialing ourselves when mDNS returns self-reflected addresses.
     local_addrs: HashSet<String>,
 }
 
 impl NetworkManager {
+    /// A manager on the default port, keeping peer state in memory.
+    ///
+    /// # Errors
+    /// [`ErrorCode::Init`] when mDNS cannot start or the stored register cannot
+    /// be read, and [`ErrorCode::Network`] when the listening address is rejected.
     pub fn new(
         command_rx: mpsc::UnboundedReceiver<SyncCommand>,
         state: SharedState,
@@ -70,6 +89,12 @@ impl NetworkManager {
         Self::build(command_rx, state, local_key, listen_port(), None)
     }
 
+    /// A manager on the default port that persists its peer register at
+    /// `store_path`.
+    ///
+    /// # Errors
+    /// [`ErrorCode::Init`] when mDNS cannot start or the stored register cannot
+    /// be read, and [`ErrorCode::Network`] when the listening address is rejected.
     pub fn new_with_storage(
         command_rx: mpsc::UnboundedReceiver<SyncCommand>,
         state: SharedState,
@@ -85,6 +110,11 @@ impl NetworkManager {
         )
     }
 
+    /// A manager on an explicit port, keeping peer state in memory.
+    ///
+    /// # Errors
+    /// [`ErrorCode::Init`] when mDNS cannot start or the stored register cannot
+    /// be read, and [`ErrorCode::Network`] when the listening address is rejected.
     pub fn new_with_port(
         command_rx: mpsc::UnboundedReceiver<SyncCommand>,
         state: SharedState,
@@ -94,6 +124,12 @@ impl NetworkManager {
         Self::build(command_rx, state, local_key, port, None)
     }
 
+    /// A manager on an explicit port that persists its peer register at
+    /// `store_path`.
+    ///
+    /// # Errors
+    /// [`ErrorCode::Init`] when mDNS cannot start or the stored register cannot
+    /// be read, and [`ErrorCode::Network`] when the listening address is rejected.
     pub fn new_with_port_and_storage(
         command_rx: mpsc::UnboundedReceiver<SyncCommand>,
         state: SharedState,
@@ -171,10 +207,6 @@ impl NetworkManager {
             request_response::Config::default(),
         );
 
-        // Images travel inside `Apply` requests, so lift the codec ceiling above
-        // the 1 MiB default. A 10 MiB PNG becomes ~13.3 MiB of base64, so 20 MiB
-        // leaves room for the envelope and the CBOR framing.
-        const MAX_CLIPBOARD_MESSAGE_BYTES: u64 = 20 * 1024 * 1024;
         let clipboard_codec =
             request_response::cbor::codec::Codec::<ClipboardRequest, ClipboardResponse>::default()
                 .set_request_size_maximum(MAX_CLIPBOARD_MESSAGE_BYTES)
@@ -253,6 +285,12 @@ impl NetworkManager {
         );
     }
 
+    /// Drives the swarm: it subscribes to the pairing topic, listens on the
+    /// configured port and then pumps events until a [`SyncCommand::Shutdown`].
+    ///
+    /// # Panics
+    /// Panics if the listen address cannot be parsed, which can only happen if
+    /// `listen_port` produced something that is not a port number.
     pub async fn run(&mut self) {
         let pairing_topic = IdentTopic::new(PAIRING_TOPIC);
         if let Err(e) = self
@@ -261,7 +299,7 @@ impl NetworkManager {
             .gossipsub
             .subscribe(&pairing_topic)
         {
-            log::error!("Failed to subscribe to pairing topic: {:?}", e);
+            log::error!("Failed to subscribe to pairing topic: {e:?}");
         }
 
         let listen_addr: libp2p::Multiaddr = format!("/ip4/0.0.0.0/tcp/{}", self.listen_port)
@@ -277,7 +315,7 @@ impl NetworkManager {
         loop {
             tokio::select! {
                 event = self.swarm.select_next_some() => {
-                    self.handle_swarm_event(event).await;
+                    self.handle_swarm_event(event);
                 }
                 Some(command) = self.command_rx.recv() => {
                     if matches!(command, SyncCommand::Shutdown) {
@@ -290,7 +328,7 @@ impl NetworkManager {
         }
     }
 
-    fn state_emit(&self, event: SyncEvent) {
+    fn state_emit(&self, event: &SyncEvent) {
         let state = self.state.lock().unwrap();
         state.emit(event);
     }
@@ -302,7 +340,10 @@ impl NetworkManager {
 
     // ── Swarm events ──────────────────────────────────────────────
 
-    async fn handle_swarm_event(&mut self, event: SwarmEvent<ManisPocketBehaviourEvent>) {
+    // One arm per swarm event: the shape of the match mirrors the protocol, and
+    // splitting it into helpers made the ordering harder to follow, not easier.
+    #[allow(clippy::too_many_lines)]
+    fn handle_swarm_event(&mut self, event: SwarmEvent<ManisPocketBehaviourEvent>) {
         match event {
             // mDNS: peer found on LAN — store but don't emit until Identify gives us a name
             SwarmEvent::Behaviour(ManisPocketBehaviourEvent::Mdns(mdns::Event::Discovered(
@@ -316,7 +357,7 @@ impl NetworkManager {
                     // correct addresses from Identify that differ from the mDNS addr.
                     let is_known = self.discovered_peers.contains_key(&peer_id);
                     if !is_known && is_own_addr(&addr, &self.local_addrs) {
-                        log::debug!("Skipping self-dial for new peer {}: {}", peer_id, addr);
+                        log::debug!("Skipping self-dial for new peer {peer_id}: {addr}");
                         continue;
                     }
                     let connected = self.swarm.is_connected(&peer_id);
@@ -331,18 +372,18 @@ impl NetworkManager {
                         // Dialing again makes libp2p replace the live connection;
                         // when the replacement handshake fails the peer is left
                         // with nothing and sync stops.
-                        log::debug!("Already connected to {}, not dialing again", peer_id);
+                        log::debug!("Already connected to {peer_id}, not dialing again");
                         continue;
                     }
                     if let Err(e) = self.swarm.dial(peer_id) {
-                        log::debug!("Dial failed for {}: {:?}", peer_id, e);
+                        log::debug!("Dial failed for {peer_id}: {e:?}");
                     }
                 }
             }
             SwarmEvent::Behaviour(ManisPocketBehaviourEvent::Mdns(mdns::Event::Expired(peers))) => {
                 for (peer_id, _) in peers {
                     if let Some(info) = self.discovered_peers.remove(&peer_id) {
-                        self.state_emit(SyncEvent::PeerLost {
+                        self.state_emit(&SyncEvent::PeerLost {
                             peer_id: info.peer_id,
                         });
                     }
@@ -359,13 +400,16 @@ impl NetworkManager {
                 let device_name = info
                     .agent_version
                     .split('/')
-                    .last()
+                    .next_back()
                     .unwrap_or("Unknown")
                     .to_string();
-                log::info!("Identified {} as {}", peer_id, device_name);
+                log::info!("Identified {peer_id} as {device_name}");
                 let observed_addr = info.observed_addr.to_string();
-                let listen_addrs: Vec<String> =
-                    info.listen_addrs.iter().map(|a| a.to_string()).collect();
+                let listen_addrs: Vec<String> = info
+                    .listen_addrs
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect();
 
                 if let Some(peer_info) = self.discovered_peers.get_mut(&peer_id) {
                     peer_info.display_name = device_name;
@@ -375,25 +419,25 @@ impl NetworkManager {
                         peer_info.addresses = vec![observed_addr];
                     }
                     let updated = peer_info.clone();
-                    self.state_emit(SyncEvent::PeerDiscovered { peer: updated });
+                    self.state_emit(&SyncEvent::PeerDiscovered { peer: updated });
                 } else {
                     let peer_info = PeerInfo {
                         peer_id: peer_id.to_string(),
                         display_name: device_name,
-                        addresses: if !listen_addrs.is_empty() {
-                            listen_addrs
-                        } else {
+                        addresses: if listen_addrs.is_empty() {
                             vec![observed_addr]
+                        } else {
+                            listen_addrs
                         },
                         is_connected: true,
                     };
                     self.discovered_peers.insert(peer_id, peer_info.clone());
-                    self.state_emit(SyncEvent::PeerDiscovered { peer: peer_info });
+                    self.state_emit(&SyncEvent::PeerDiscovered { peer: peer_info });
                 }
             }
 
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                log::info!("Connection established with {}", peer_id);
+                log::info!("Connection established with {peer_id}");
                 if self.paired_peers.contains(&peer_id) {
                     self.request_head(peer_id);
                 }
@@ -402,18 +446,18 @@ impl NetworkManager {
                     // Only emit if we already have a display_name from Identify
                     if !peer_info.display_name.is_empty() {
                         let info = peer_info.clone();
-                        self.state_emit(SyncEvent::PeerDiscovered { peer: info });
+                        self.state_emit(&SyncEvent::PeerDiscovered { peer: info });
                     }
                 }
                 // If not in discovered_peers yet, Identify will handle it
             }
             SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                log::warn!("Connection closed with {}", peer_id);
+                log::warn!("Connection closed with {peer_id}");
                 if let Some(peer_info) = self.discovered_peers.get_mut(&peer_id) {
                     peer_info.is_connected = false;
                     if !peer_info.display_name.is_empty() {
                         let info = peer_info.clone();
-                        self.state_emit(SyncEvent::PeerDiscovered { peer: info });
+                        self.state_emit(&SyncEvent::PeerDiscovered { peer: info });
                     }
                 }
             }
@@ -422,13 +466,13 @@ impl NetworkManager {
             SwarmEvent::Behaviour(ManisPocketBehaviourEvent::Gossipsub(
                 gossipsub::Event::Message { message, .. },
             )) => {
-                if message.topic.as_str() == PAIRING_TOPIC {
-                    if let (Some(source), Ok(pairing_msg)) = (
+                if message.topic.as_str() == PAIRING_TOPIC
+                    && let (Some(source), Ok(pairing_msg)) = (
                         message.source,
                         serde_json::from_slice::<PairingMessage>(&message.data),
-                    ) {
-                        self.handle_pairing_message(source, pairing_msg);
-                    }
+                    )
+                {
+                    self.handle_pairing_message(source, pairing_msg);
                 }
             }
 
@@ -453,24 +497,21 @@ impl NetworkManager {
             }
 
             SwarmEvent::NewListenAddr { address, .. } => {
-                log::info!("Listening on {}", address);
+                log::info!("Listening on {address}");
                 self.local_addrs.insert(address.to_string());
-                self.state_emit(SyncEvent::Listening {
+                self.state_emit(&SyncEvent::Listening {
                     address: address.to_string(),
                 });
             }
             SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
-                log::error!("Outgoing connection error: {:?} ({:?})", peer_id, error);
-                self.emit_error(
-                    ErrorCode::Network,
-                    format!("Connection failed: {:?}", error),
-                );
+                log::error!("Outgoing connection error: {peer_id:?} ({error:?})");
+                self.emit_error(ErrorCode::Network, format!("Connection failed: {error:?}"));
             }
             SwarmEvent::IncomingConnectionError { error, .. } => {
-                log::error!("Incoming connection error: {:?}", error);
+                log::error!("Incoming connection error: {error:?}");
             }
             SwarmEvent::ListenerError { error, .. } => {
-                log::error!("Listener error: {:?}", error);
+                log::error!("Listener error: {error:?}");
             }
 
             // ── File transfer ────────────────────────────────
@@ -487,8 +528,8 @@ impl NetworkManager {
                     ..
                 },
             )) => {
-                log::error!("File transfer outbound failure to {}: {:?}", peer, error);
-                self.state_emit(SyncEvent::FileDownloadComplete {
+                log::error!("File transfer outbound failure to {peer}: {error:?}");
+                self.state_emit(&SyncEvent::FileDownloadComplete {
                     request_id: request_id.to_string(),
                     file_path: String::new(),
                     success: false,
@@ -531,7 +572,7 @@ impl NetworkManager {
                 self.respond_clipboard(channel, ClipboardResponse::Head { head, update });
             }
             ClipboardRequest::Apply { update } => {
-                self.receive_clipboard_update(peer, update, Some(channel));
+                self.receive_clipboard_update(&peer, &update, Some(channel));
             }
         }
     }
@@ -543,14 +584,13 @@ impl NetworkManager {
         match response {
             ClipboardResponse::Head { head, update } => {
                 if let Some(update) = update {
-                    self.receive_clipboard_update(peer, update, None);
+                    self.receive_clipboard_update(&peer, &update, None);
                 }
-                if let Some(local) = self.clipboard.head.as_ref() {
-                    if local.revision.peer_id == self.local_peer_id.to_string()
-                        && head.as_ref().is_none_or(|remote| local.revision > *remote)
-                    {
-                        self.send_current(peer, local.clone());
-                    }
+                if let Some(local) = self.clipboard.head.as_ref()
+                    && local.revision.peer_id == self.local_peer_id.to_string()
+                    && head.as_ref().is_none_or(|remote| local.revision > *remote)
+                {
+                    self.send_current(peer, local.clone());
                 }
             }
             ClipboardResponse::Apply { status } => {
@@ -569,15 +609,15 @@ impl NetworkManager {
     /// write failed, which in turn made every later update bounce off `Retry`.
     fn receive_clipboard_update(
         &mut self,
-        peer: PeerId,
-        update: ClipboardUpdate,
+        peer: &PeerId,
+        update: &ClipboardUpdate,
         channel: Option<request_response::ResponseChannel<ClipboardResponse>>,
     ) {
         let mut next = self.clipboard.clone();
-        let result = if update.revision.peer_id != peer.to_string() {
-            MergeResult::Invalid
-        } else {
+        let result = if update.revision.peer_id == peer.to_string() {
             next.apply(update.clone())
+        } else {
+            MergeResult::Invalid
         };
         let status = match result {
             MergeResult::Applied => {
@@ -588,7 +628,7 @@ impl NetworkManager {
                     // Retried by the periodic reconcile, not by blocking the peer.
                     self.pending_persist = true;
                 }
-                self.state_emit(SyncEvent::CurrentClipboardReceived {
+                self.state_emit(&SyncEvent::CurrentClipboardReceived {
                     event_id,
                     peer_id: peer.to_string(),
                     content,
@@ -596,7 +636,7 @@ impl NetworkManager {
                 // Propagate to the other paired peers: with three or more
                 // devices the sender may not be connected to all of them.
                 for other in self.paired_peers.iter().copied().collect::<Vec<_>>() {
-                    if other != peer {
+                    if other != *peer {
                         self.send_current(other, update.clone());
                     }
                 }
@@ -627,7 +667,7 @@ impl NetworkManager {
                     // otherwise a dropped confirm leaves the peer unable to pair
                     // until the app restarts.
                     log::info!("Re-confirming an existing pairing with {peer}");
-                    self.publish_pairing_message(PairingMessage::Confirm {
+                    self.publish_pairing_message(&PairingMessage::Confirm {
                         session_id,
                         target_peer_id: peer.to_string(),
                         nonce: next_nonce(),
@@ -652,8 +692,8 @@ impl NetworkManager {
                         created_at: Instant::now(),
                     },
                 );
-                log::info!("Pairing request from {} ({})", device_name, peer);
-                self.state_emit(SyncEvent::PairingRequest {
+                log::info!("Pairing request from {device_name} ({peer})");
+                self.state_emit(&SyncEvent::PairingRequest {
                     peer_id: peer.to_string(),
                     display_name: device_name,
                     pin,
@@ -667,13 +707,12 @@ impl NetworkManager {
                 if target_peer_id != self.local_peer_id.to_string() {
                     return;
                 }
-                if let Some(pending) = self.pending_pairings.get_mut(&peer) {
-                    if pending.session_id == session_id
-                        && pending.created_at.elapsed() <= PAIRING_TIMEOUT
-                    {
-                        pending.remote_confirmed = true;
-                        self.finish_pairing_if_confirmed(peer);
-                    }
+                if let Some(pending) = self.pending_pairings.get_mut(&peer)
+                    && pending.session_id == session_id
+                    && pending.created_at.elapsed() <= PAIRING_TIMEOUT
+                {
+                    pending.remote_confirmed = true;
+                    self.finish_pairing_if_confirmed(peer);
                 }
             }
             PairingMessage::Reject {
@@ -687,7 +726,7 @@ impl NetworkManager {
                         .is_some_and(|pending| pending.session_id == session_id)
                 {
                     self.pending_pairings.remove(&peer);
-                    self.state_emit(SyncEvent::PairingComplete {
+                    self.state_emit(&SyncEvent::PairingComplete {
                         peer_id: peer.to_string(),
                         success: false,
                     });
@@ -705,15 +744,14 @@ impl NetworkManager {
             let session_id = self
                 .pending_pairings
                 .get(&peer)
-                .map(|pending| pending.session_id.clone())
-                .unwrap_or_default();
+                .map_or_default(|pending| pending.session_id.clone());
             self.pending_pairings.remove(&peer);
             self.paired_peers.insert(peer);
             // Keep confirming for a while: the peer may have missed the message
             // that completed our side, and without a repeat it waits forever.
             self.recent_confirms
                 .push((peer, session_id, Instant::now()));
-            self.state_emit(SyncEvent::PairingComplete {
+            self.state_emit(&SyncEvent::PairingComplete {
                 peer_id: peer.to_string(),
                 success: true,
             });
@@ -721,7 +759,7 @@ impl NetworkManager {
         }
     }
 
-    fn publish_pairing_message(&mut self, message: PairingMessage) {
+    fn publish_pairing_message(&mut self, message: &PairingMessage) {
         if let Ok(data) = serde_json::to_vec(&message) {
             let topic = IdentTopic::new(PAIRING_TOPIC);
             if let Err(error) = self.swarm.behaviour_mut().gossipsub.publish(topic, data) {
@@ -744,7 +782,7 @@ impl NetworkManager {
             request_response::Message::Request {
                 request, channel, ..
             } => {
-                log::warn!("Rejected file request from {}", peer);
+                log::warn!("Rejected file request from {peer}");
                 let _ = self.swarm.behaviour_mut().file_transfer.send_response(
                     channel,
                     FileChunk {
@@ -761,7 +799,7 @@ impl NetworkManager {
                 request_id,
                 response,
             } => {
-                self.state_emit(SyncEvent::FileChunkReceived {
+                self.state_emit(&SyncEvent::FileChunkReceived {
                     request_id: request_id.to_string(),
                     file_name: response.file_name,
                     file_size: response.file_size,
@@ -775,6 +813,9 @@ impl NetworkManager {
 
     // ── Command handlers ──────────────────────────────────────────
 
+    // Same reasoning as `handle_swarm_event`: one arm per command reads better
+    // than a dozen one-call helpers.
+    #[allow(clippy::too_many_lines)]
     fn handle_command(&mut self, command: SyncCommand) {
         match command {
             SyncCommand::BroadcastItem { item_json } => {
@@ -803,8 +844,12 @@ impl NetworkManager {
                 let _ = reply.send(true);
             }
             // History records are local. Clipboard state uses its own versioned protocol.
-            SyncCommand::BroadcastDeletion { .. } | SyncCommand::BroadcastUpdate { .. } => {}
-            SyncCommand::StartDiscovery | SyncCommand::StopDiscovery => {}
+            // Shutdown is the event loop's business: it drops the swarm itself.
+            SyncCommand::BroadcastDeletion { .. }
+            | SyncCommand::BroadcastUpdate { .. }
+            | SyncCommand::StartDiscovery
+            | SyncCommand::StopDiscovery
+            | SyncCommand::Shutdown => {}
 
             SyncCommand::RequestPairing { peer_id } => {
                 if let Ok(peer) = peer_id.parse::<PeerId>() {
@@ -827,7 +872,7 @@ impl NetworkManager {
                             created_at: Instant::now(),
                         },
                     );
-                    self.publish_pairing_message(PairingMessage::Request {
+                    self.publish_pairing_message(&PairingMessage::Request {
                         session_id,
                         target_peer_id: peer.to_string(),
                         device_name,
@@ -838,7 +883,7 @@ impl NetworkManager {
                         .map(|info| info.display_name.clone())
                         .filter(|name| !name.is_empty())
                         .unwrap_or_else(|| peer.to_string());
-                    self.state_emit(SyncEvent::PairingRequest {
+                    self.state_emit(&SyncEvent::PairingRequest {
                         peer_id: peer.to_string(),
                         display_name,
                         pin,
@@ -859,7 +904,7 @@ impl NetworkManager {
                     }
                     pending.local_confirmed = true;
                     let session_id = pending.session_id.clone();
-                    self.publish_pairing_message(PairingMessage::Confirm {
+                    self.publish_pairing_message(&PairingMessage::Confirm {
                         session_id,
                         target_peer_id: peer.to_string(),
                         nonce: next_nonce(),
@@ -868,13 +913,13 @@ impl NetworkManager {
                 }
             }
             SyncCommand::RejectPairing { peer_id } => {
-                if let Ok(peer) = peer_id.parse::<PeerId>() {
-                    if let Some(pending) = self.pending_pairings.remove(&peer) {
-                        self.publish_pairing_message(PairingMessage::Reject {
-                            session_id: pending.session_id,
-                            target_peer_id: peer.to_string(),
-                        });
-                    }
+                if let Ok(peer) = peer_id.parse::<PeerId>()
+                    && let Some(pending) = self.pending_pairings.remove(&peer)
+                {
+                    self.publish_pairing_message(&PairingMessage::Reject {
+                        session_id: pending.session_id,
+                        target_peer_id: peer.to_string(),
+                    });
                 }
             }
             SyncCommand::AddPeerAddress { address } => {
@@ -883,31 +928,28 @@ impl NetworkManager {
                 } else {
                     parse_host_port_to_multiaddr(&address)
                 };
-                log::info!("Dialing {} (from {})", multiaddr, address);
+                log::info!("Dialing {multiaddr} (from {address})");
                 if let Ok(addr) = multiaddr.parse::<libp2p::Multiaddr>() {
                     // Same reasoning as mDNS: never replace a working connection.
-                    if let Some(peer) = self.peer_id_for_addr(&addr) {
-                        if self.swarm.is_connected(&peer) {
-                            log::info!("Already connected to {}, skipping dial", peer);
-                            return;
-                        }
+                    if let Some(peer) = self.peer_id_for_addr(&addr)
+                        && self.swarm.is_connected(&peer)
+                    {
+                        log::info!("Already connected to {peer}, skipping dial");
+                        return;
                     }
                     match self.swarm.dial(addr.clone()) {
-                        Ok(()) => log::info!("Dialing {}", addr),
+                        Ok(()) => log::info!("Dialing {addr}"),
                         Err(e) => {
-                            log::error!("Failed to dial {}: {:?}", addr, e);
+                            log::error!("Failed to dial {addr}: {e:?}");
                             self.emit_error(
                                 ErrorCode::Network,
-                                format!("Failed to dial {}: {:?}", addr, e),
+                                format!("Failed to dial {addr}: {e:?}"),
                             );
                         }
                     }
                 } else {
-                    log::error!("Invalid multiaddr: {}", multiaddr);
-                    self.emit_error(
-                        ErrorCode::InvalidArg,
-                        format!("Invalid address: {}", address),
-                    );
+                    log::error!("Invalid multiaddr: {multiaddr}");
+                    self.emit_error(ErrorCode::InvalidArg, format!("Invalid address: {address}"));
                 }
             }
             SyncCommand::Unpair { peer_id } => {
@@ -927,7 +969,6 @@ impl NetworkManager {
                     "File transfer is disabled until files can be shared by explicit ID".into(),
                 );
             }
-            _ => {}
         }
     }
 
@@ -991,7 +1032,7 @@ impl NetworkManager {
         }
         for (peer, session_id) in republish {
             log::debug!("re-sending pairing confirm to {peer}");
-            self.publish_pairing_message(PairingMessage::Confirm {
+            self.publish_pairing_message(&PairingMessage::Confirm {
                 session_id,
                 target_peer_id: peer.to_string(),
                 nonce: next_nonce(),
@@ -1003,7 +1044,7 @@ impl NetworkManager {
         let mut keep: Vec<(PeerId, String, Instant)> = Vec::new();
         for (peer, session_id, at) in std::mem::take(&mut self.recent_confirms) {
             if at.elapsed() <= Duration::from_secs(10) {
-                self.publish_pairing_message(PairingMessage::Confirm {
+                self.publish_pairing_message(&PairingMessage::Confirm {
                     session_id: session_id.clone(),
                     target_peer_id: peer.to_string(),
                     nonce: next_nonce(),
@@ -1045,7 +1086,7 @@ impl NetworkManager {
             })
             .collect();
         for peer in offline {
-            log::debug!("redialing paired peer {}", peer);
+            log::debug!("redialing paired peer {peer}");
             self.last_dial.insert(peer, Instant::now());
             let _ = self.swarm.dial(peer);
         }
@@ -1134,14 +1175,12 @@ fn portable_value_from_json(json: &str) -> Option<ClipboardValue> {
             "text/plain" | "text/plain;charset=utf-8" | "public.utf8-plain-text"
         )
     });
-    if let Some(encoded) = text.and_then(|content| content.value.as_deref()) {
-        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) {
-            if let Ok(text) = String::from_utf8(bytes) {
-                if !text.is_empty() {
-                    return Some(ClipboardValue::Text(text));
-                }
-            }
-        }
+    if let Some(encoded) = text.and_then(|content| content.value.as_deref())
+        && let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded)
+        && let Ok(text) = String::from_utf8(bytes)
+        && !text.is_empty()
+    {
+        return Some(ClipboardValue::Text(text));
     }
 
     let image = item
@@ -1189,21 +1228,22 @@ fn is_own_addr(addr: &libp2p::Multiaddr, local_addrs: &HashSet<String>) -> bool 
 
 fn parse_host_port_to_multiaddr(input: &str) -> String {
     let input = input.trim();
-    if let Some(rest) = input.strip_prefix('[') {
-        if let Some(bracket_end) = rest.find("]:") {
-            let host = &rest[..bracket_end];
-            let port = &rest[bracket_end + 2..];
-            return format!("/ip6/{}/tcp/{}", host, port);
-        }
+    if let Some(rest) = input.strip_prefix('[')
+        && let Some(bracket_end) = rest.find("]:")
+    {
+        let host = &rest[..bracket_end];
+        let port = &rest[bracket_end + 2..];
+        return format!("/ip6/{host}/tcp/{port}");
     }
     if let Some(colon) = input.rfind(':') {
         let host = &input[..colon];
         let port = &input[colon + 1..];
-        return format!("/ip4/{}/tcp/{}", host, port);
+        return format!("/ip4/{host}/tcp/{port}");
     }
     input.to_string()
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

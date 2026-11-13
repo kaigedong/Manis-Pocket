@@ -97,6 +97,9 @@ fn code_for(node: &Node, peer: &str) -> String {
 }
 
 #[test]
+// A single scenario from pairing to a relaxed update; keeping the steps in
+// order is the point of the test.
+#[allow(clippy::too_many_lines)]
 fn synthetic_clipboard_message_reaches_second_node_after_pairing() {
     let port_a = available_port();
     let mut port_b = available_port();

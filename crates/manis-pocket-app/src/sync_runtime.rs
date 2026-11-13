@@ -155,8 +155,7 @@ impl ClipboardObserver for AppObserver {
         if take_request(&peer_id) {
             // We started this pairing, so confirm our own side immediately; the
             // peer still has to accept on its own.
-            let _ = self
-                .history
+            self.history
                 .sync_accept_pairing(peer_id.clone(), pin.clone());
             eprintln!("[sync] auto-confirmed our side of the pairing with {peer_id}");
         }
@@ -233,6 +232,7 @@ pub fn start(
 }
 
 #[cfg(test)]
+#[cfg(test)]
 mod tests {
     use super::*;
     use manis_pocket_core::model::ClipboardContent;
@@ -280,36 +280,30 @@ mod tests {
         let stored = history.load_metadata().unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].title, "from the phone");
-        assert!(matches!(
-            rx.try_next(),
-            Ok(Some(SyncNotice::HistoryChanged))
-        ));
+        assert!(matches!(rx.try_recv(), Ok(SyncNotice::HistoryChanged)));
     }
 
     #[test]
     fn peer_deletions_remove_the_entry() {
         let (history, observer, mut rx) = observer();
         observer.on_item_received(item("peer-1", "temporary"));
-        let _ = rx.try_next();
+        let _ = rx.try_recv();
 
         observer.on_item_deleted("peer-1".to_string());
         assert!(history.load_metadata().unwrap().is_empty());
-        assert!(matches!(
-            rx.try_next(),
-            Ok(Some(SyncNotice::HistoryChanged))
-        ));
+        assert!(matches!(rx.try_recv(), Ok(SyncNotice::HistoryChanged)));
     }
 
     #[test]
     fn pairing_requests_reach_the_ui_with_their_pin() {
         let (_history, observer, mut rx) = observer();
         observer.on_pairing_request("peer-9".into(), "Pixel".into(), "123456".into());
-        match rx.try_next() {
-            Ok(Some(SyncNotice::PairingRequest {
+        match rx.try_recv() {
+            Ok(SyncNotice::PairingRequest {
                 peer_id,
                 display_name,
                 pin,
-            })) => {
+            }) => {
                 assert_eq!(peer_id, "peer-9");
                 assert_eq!(display_name, "Pixel");
                 assert_eq!(pin, "123456");

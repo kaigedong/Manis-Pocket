@@ -46,6 +46,7 @@ fn matches_any_pattern(patterns: &[String], text: &str) -> bool {
 }
 
 #[cfg(test)]
+#[cfg(test)]
 mod tests {
     use super::*;
 

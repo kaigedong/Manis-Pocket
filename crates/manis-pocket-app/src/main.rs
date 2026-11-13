@@ -247,7 +247,7 @@ impl ListDelegate for HistoryList {
                     let mut span = div().child(text);
                     if matched {
                         span = if highlight_background {
-                            span.bg(gpui::rgb(0xFFF1_76))
+                            span.bg(gpui::rgb(0xFF_F176))
                         } else {
                             span.font_weight(gpui::FontWeight::BOLD)
                         };
@@ -299,7 +299,7 @@ impl ListDelegate for HistoryList {
                         cx.on_next_frame(window, move |_state, _window, cx| {
                             let _ = history.toggle_pin(id.clone(), pins.clone());
                             if let Some(panel) = panel.as_ref().and_then(|panel| panel.upgrade()) {
-                                let _ = panel.update(cx, |panel, cx| panel.reload(cx));
+                                panel.update(cx, |panel, cx| panel.reload(cx));
                             }
                         });
                     }),
@@ -315,7 +315,7 @@ impl ListDelegate for HistoryList {
                         cx.on_next_frame(window, move |_state, _window, cx| {
                             let _ = history.delete(id.clone());
                             if let Some(panel) = panel.as_ref().and_then(|panel| panel.upgrade()) {
-                                let _ = panel.update(cx, |panel, cx| panel.reload(cx));
+                                panel.update(cx, |panel, cx| panel.reload(cx));
                             }
                         });
                     }),
@@ -435,7 +435,7 @@ impl ListDelegate for HistoryList {
                             // happen while the list is being updated; wait a beat.
                             let id = click_id.clone();
                             window.on_next_frame(move |_window, cx| {
-                                let _ = panel.update(cx, |panel, cx| {
+                                panel.update(cx, |panel, cx| {
                                     panel.toggle_checked(id.clone(), cx);
                                 });
                             });
@@ -462,7 +462,7 @@ impl ListDelegate for HistoryList {
         let id = ix.and_then(|ix| self.item_at(ix).map(|item| item.id.clone()));
         if let Some(panel) = self.panel.as_ref().and_then(|panel| panel.upgrade()) {
             cx.spawn(async move |_state, cx| {
-                let _ = panel.update(cx, |panel, cx| panel.select_entry(id, cx));
+                panel.update(cx, |panel, cx| panel.select_entry(id, cx));
             })
             .detach();
         }
@@ -761,14 +761,14 @@ impl HistoryPanel {
         let Some(next) = rows::next_row(current, delta, count) else {
             return;
         };
-        self.selected_id = ids.get(next as usize).cloned();
+        self.selected_id = ids.get(next).cloned();
         self.load_preview_image(cx);
         let list = self.list.clone();
-        let _ = list.update(cx, |state, cx| {
+        list.update(cx, |state, cx| {
             state.set_selected_index(
                 Some(gpui_kit::base::IndexPath {
                     section: 0,
-                    row: next as usize,
+                    row: next,
                     column: 0,
                 }),
                 window,
@@ -782,7 +782,7 @@ impl HistoryPanel {
     /// Copies what the user is pointing at: the highlighted row, or the first one.
     fn confirm_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let list = self.list.clone();
-        let _ = list.update(cx, |state, cx| {
+        list.update(cx, |state, cx| {
             state.delegate_mut().confirm(false, window, cx);
         });
     }
@@ -1584,7 +1584,7 @@ fn default_origin(screen: &Bounds<gpui::Pixels>, panel: Size<gpui::Pixels>) -> P
 }
 
 /// Reports whether the command reached a running instance.
-fn exit_after(delivered: bool) -> () {
+fn exit_after(delivered: bool) {
     if !delivered {
         eprintln!("no running Manis Pocket instance to command");
         std::process::exit(1);
@@ -1813,10 +1813,10 @@ fn main() {
     // the real one; `open --args` cannot pass environment variables.
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
-        if arg == "--database" {
-            if let Some(path) = args.next() {
-                let _ = DATABASE_OVERRIDE.set(path);
-            }
+        if arg == "--database"
+            && let Some(path) = args.next()
+        {
+            let _ = DATABASE_OVERRIDE.set(path);
         }
     }
 
@@ -1827,46 +1827,46 @@ fn main() {
         // Copies several entries in the given order, joined by newlines: the same
         // work the panel's paste stack does, and the only form of it that can be
         // checked without a window.
-        if arg == "--copy-stack" {
-            if let Some(ids) = args.next() {
-                let history = HistoryManager::new(storage_path()).ok();
-                let mut parts: Vec<String> = Vec::new();
-                if let Some(history) = history {
-                    for id in ids.split(',').map(str::trim).filter(|id| !id.is_empty()) {
-                        let Ok(contents) = history.contents(id.to_string()) else {
-                            continue;
-                        };
-                        if let Some(text) = contents
-                            .iter()
-                            .find(|content| {
-                                matches!(
-                                    content.content_type.as_str(),
-                                    "public.utf8-plain-text"
-                                        | "text/plain"
-                                        | "text/plain;charset=utf-8"
-                                )
-                            })
-                            .and_then(|content| content.value.as_ref())
-                            .map(|value| String::from_utf8_lossy(value).to_string())
-                        {
-                            parts.push(text);
-                        }
+        if arg == "--copy-stack"
+            && let Some(ids) = args.next()
+        {
+            let history = HistoryManager::new(storage_path()).ok();
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(history) = history {
+                for id in ids.split(',').map(str::trim).filter(|id| !id.is_empty()) {
+                    let Ok(contents) = history.contents(id.to_string()) else {
+                        continue;
+                    };
+                    if let Some(text) = contents
+                        .iter()
+                        .find(|content| {
+                            matches!(
+                                content.content_type.as_str(),
+                                "public.utf8-plain-text"
+                                    | "text/plain"
+                                    | "text/plain;charset=utf-8"
+                            )
+                        })
+                        .and_then(|content| content.value.as_ref())
+                        .map(|value| String::from_utf8_lossy(value).to_string())
+                    {
+                        parts.push(text);
                     }
                 }
-                let ok = !parts.is_empty() && crate::clipboard::write_text(&parts.join("\n"));
-                println!("{ok}");
-                return;
             }
+            let ok = !parts.is_empty() && crate::clipboard::write_text(&parts.join("\n"));
+            println!("{ok}");
+            return;
         }
 
-        if arg == "--copy" {
-            if let Some(id) = args.next() {
-                let ok = HistoryManager::new(storage_path())
-                    .map(|history| copy_entry_to_clipboard(&history, &id))
-                    .unwrap_or(false);
-                println!("{ok}");
-                return;
-            }
+        if arg == "--copy"
+            && let Some(id) = args.next()
+        {
+            let ok = HistoryManager::new(storage_path())
+                .map(|history| copy_entry_to_clipboard(&history, &id))
+                .unwrap_or(false);
+            println!("{ok}");
+            return;
         }
     }
 
@@ -1874,23 +1874,23 @@ fn main() {
     // `--accept <peer> <pin>`, `--connect <multiaddr>`.
     let args: Vec<String> = std::env::args().collect();
     let flag = |name: &str| args.iter().position(|arg| arg == name);
-    if let Some(index) = flag("--pair") {
-        if let Some(peer_id) = args.get(index + 1) {
-            return exit_after(ipc::send(&storage_path(), &format!("pair {peer_id}")));
-        }
+    if let Some(index) = flag("--pair")
+        && let Some(peer_id) = args.get(index + 1)
+    {
+        return exit_after(ipc::send(&storage_path(), &format!("pair {peer_id}")));
     }
-    if let Some(index) = flag("--accept") {
-        if let (Some(peer_id), Some(pin)) = (args.get(index + 1), args.get(index + 2)) {
-            return exit_after(ipc::send(
-                &storage_path(),
-                &format!("accept {peer_id} {pin}"),
-            ));
-        }
+    if let Some(index) = flag("--accept")
+        && let (Some(peer_id), Some(pin)) = (args.get(index + 1), args.get(index + 2))
+    {
+        return exit_after(ipc::send(
+            &storage_path(),
+            &format!("accept {peer_id} {pin}"),
+        ));
     }
-    if let Some(index) = flag("--connect") {
-        if let Some(address) = args.get(index + 1) {
-            return exit_after(ipc::send(&storage_path(), &format!("connect {address}")));
-        }
+    if let Some(index) = flag("--connect")
+        && let Some(address) = args.get(index + 1)
+    {
+        return exit_after(ipc::send(&storage_path(), &format!("connect {address}")));
     }
 
     let shared_history =
@@ -2093,7 +2093,8 @@ fn record_clipboard_change(
 
     // Tell the sync engine what is on the clipboard now, so paired peers receive
     // it. Without this the local copy stays local.
-    let broadcast = history.sync_observe_local_clipboard(Some(ClipboardContent {
+    let broadcast = ();
+    history.sync_observe_local_clipboard(Some(ClipboardContent {
         content_type: content_type.to_string(),
         value: Some(bytes),
     }));

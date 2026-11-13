@@ -49,6 +49,7 @@ impl ClipboardValue {
     /// skip them instead of downgrading to [`ClipboardValue::Unavailable`]:
     /// clearing the peer's clipboard because we copied something we cannot ship
     /// (a file, a huge image) is never what the user asked for.
+    #[must_use]
     pub fn is_shareable(&self) -> bool {
         match self {
             ClipboardValue::Text(text) => {
@@ -64,6 +65,7 @@ impl ClipboardValue {
     }
 
     /// The text carried by this value, if any.
+    #[must_use]
     pub fn as_text(&self) -> Option<&str> {
         match self {
             ClipboardValue::Text(text) => Some(text),
@@ -76,9 +78,10 @@ impl ClipboardValue {
 ///
 /// Returns `None` when the input is not valid base64 (bad length, padding in
 /// the middle, or characters outside the standard alphabet).
+#[must_use]
 pub fn decoded_base64_len(data: &str) -> Option<usize> {
     let bytes = data.as_bytes();
-    if bytes.is_empty() || bytes.len() % 4 != 0 {
+    if bytes.is_empty() || !bytes.len().is_multiple_of(4) {
         return None;
     }
     let padding = bytes.iter().rev().take_while(|byte| **byte == b'=').count();
@@ -157,6 +160,7 @@ impl ClipboardRegister {
         Some(update)
     }
 
+    #[must_use]
     pub fn compare(&self, update: &ClipboardUpdate) -> MergeResult {
         if !is_valid(update) {
             return MergeResult::Invalid;
@@ -184,6 +188,11 @@ impl ClipboardRegister {
     }
 }
 
+/// Reads the clipboard register that belongs to `local_peer_id`.
+///
+/// # Errors
+/// An [`io::Error`] when the file cannot be read, when it holds another
+/// identity's register, or when the stored head fails validation.
 pub fn load_register(path: &Path, local_peer_id: &str) -> io::Result<ClipboardRegister> {
     if !path.exists() {
         return Ok(ClipboardRegister::default());
@@ -216,6 +225,12 @@ pub fn load_register(path: &Path, local_peer_id: &str) -> io::Result<ClipboardRe
     Ok(register)
 }
 
+/// Writes the register next to `path`, replacing an existing file only once the
+/// new contents are on disk.
+///
+/// # Errors
+/// An [`io::Error`] when the register cannot be serialised, the temporary file
+/// cannot be written, or the rename fails.
 pub fn save_register(
     path: &Path,
     local_peer_id: &str,
@@ -244,6 +259,7 @@ pub fn save_register(
     write_result
 }
 
+#[must_use]
 pub fn is_valid(update: &ClipboardUpdate) -> bool {
     !update.event_id.is_empty()
         && update.revision.counter > 0
@@ -252,6 +268,7 @@ pub fn is_valid(update: &ClipboardUpdate) -> bool {
         && update.value.is_shareable()
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

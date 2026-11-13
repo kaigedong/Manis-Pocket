@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 use crate::error::ErrorCode;
 use crate::register::ClipboardValue;
-use crate::types::*;
+use crate::types::SyncEvent;
 
 type EventCallback = Arc<Mutex<Option<Box<dyn Fn(&str) + Send + Sync>>>>;
 
@@ -18,11 +18,15 @@ pub struct SyncState {
     pub device_id: String,
     pub device_name: String,
 
-    /// Single unified callback — receives JSON-serialized SyncEvent
+    /// Single unified callback — receives JSON-serialized `SyncEvent`
     pub on_event: EventCallback,
 }
 
 impl SyncState {
+    /// Starts a device's sync state and the runtime its transport will use.
+    ///
+    /// # Errors
+    /// [`ErrorCode::Init`] when the Tokio runtime cannot be created.
     pub fn new(device_name: &str, device_id: &str) -> Result<Self, ErrorCode> {
         let runtime = Runtime::new().map_err(|_| ErrorCode::Init)?;
         let (command_tx, _command_rx) = mpsc::unbounded_channel();
@@ -36,10 +40,10 @@ impl SyncState {
         })
     }
 
-    /// Emit a SyncEvent as JSON to the platform shell.
-    pub fn emit(&self, event: SyncEvent) {
-        if let Ok(json) = serde_json::to_string(&event) {
-            log::debug!("emit: {}", json);
+    /// Emit a `SyncEvent` as JSON to the platform shell.
+    pub fn emit(&self, event: &SyncEvent) {
+        if let Ok(json) = serde_json::to_string(event) {
+            log::debug!("emit: {json}");
             if let Some(cb) = self.on_event.lock().as_ref() {
                 cb(&json);
             }
@@ -47,7 +51,7 @@ impl SyncState {
     }
 
     pub fn emit_error(&self, code: ErrorCode, message: String) {
-        self.emit(SyncEvent::Error {
+        self.emit(&SyncEvent::Error {
             code: code as i32,
             message,
         });

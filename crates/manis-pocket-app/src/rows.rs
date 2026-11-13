@@ -74,12 +74,13 @@ fn percent_decode(text: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(&text[index + 1..index + 3], 16) {
-                out.push(byte);
-                index += 3;
-                continue;
-            }
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let Ok(byte) = u8::from_str_radix(&text[index + 1..index + 3], 16)
+        {
+            out.push(byte);
+            index += 3;
+            continue;
         }
         out.push(bytes[index]);
         index += 1;
@@ -422,6 +423,7 @@ pub fn relative_time(timestamp_ms: i64, now_ms: i64) -> String {
     }
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,3 +1,9 @@
+// This file is the C boundary. Every symbol here is called by Android's JNI or by
+// Swift, so a fixed name and a raw pointer are part of the contract rather than a
+// shortcut — that is why the crate's `unsafe_code` warning is switched off here
+// and every block carries a safety note instead.
+#![allow(unsafe_code)]
+
 use std::ffi::{CStr, CString};
 use std::io::Write;
 use std::os::raw::c_char;
@@ -38,6 +44,8 @@ fn c_str_to_string(s: *const c_char) -> Option<String> {
     if s.is_null() {
         return None;
     }
+    // SAFETY: callers pass a NUL-terminated C string, or a null pointer, which is
+    // rejected above before this point is reached.
     unsafe { CStr::from_ptr(s).to_str().ok().map(String::from) }
 }
 
@@ -45,6 +53,8 @@ fn with_state<F, R>(sync: *mut ManisPocketSync, f: F) -> R
 where
     F: FnOnce(SharedState) -> R,
 {
+    // SAFETY: `sync` came from `Arc::into_raw` in `create` and is only ever handed
+    // back here once; the count is restored with `mem::forget` below.
     let state: SharedState = unsafe { Arc::from_raw(sync as *const std::sync::Mutex<SyncState>) };
     let result = f(state.clone());
     std::mem::forget(state);
@@ -61,7 +71,7 @@ pub extern "C" fn manis_pocket_sync_create(
     let name = c_str_to_string(device_name).unwrap_or_default();
     let id = c_str_to_string(device_id).unwrap_or_default();
     ensure_logger();
-    log::info!("manis_pocket_sync_create: name={}, id={}", name, id);
+    log::info!("manis_pocket_sync_create: name={name}, id={id}");
 
     match SyncState::new(&name, &id) {
         Ok(state) => Arc::into_raw(Arc::new(std::sync::Mutex::new(state))) as *mut ManisPocketSync,
@@ -142,7 +152,7 @@ pub extern "C" fn manis_pocket_sync_on_event(
     }
     let cb = cb.unwrap();
     with_state(sync, |state| {
-        let mut guard = state.lock().unwrap();
+        let guard = state.lock().unwrap();
         *guard.on_event.lock() = Some(Box::new(move |json: &str| {
             let c_json = CString::new(json).unwrap_or_default();
             cb(c_json.as_ptr());
@@ -170,9 +180,8 @@ pub extern "C" fn manis_pocket_sync_add_peer_address(
     _peer_id: *const c_char,
     address: *const c_char,
 ) -> i32 {
-    let addr = match c_str_to_string(address) {
-        Some(s) => s,
-        None => return ErrorCode::InvalidArg as i32,
+    let Some(addr) = c_str_to_string(address) else {
+        return ErrorCode::InvalidArg as i32;
     };
     send_command(sync, SyncCommand::AddPeerAddress { address: addr })
 }
@@ -182,9 +191,8 @@ pub extern "C" fn manis_pocket_sync_request_pairing(
     sync: *mut ManisPocketSync,
     peer_id: *const c_char,
 ) -> i32 {
-    let pid = match c_str_to_string(peer_id) {
-        Some(s) => s,
-        None => return ErrorCode::InvalidArg as i32,
+    let Some(pid) = c_str_to_string(peer_id) else {
+        return ErrorCode::InvalidArg as i32;
     };
     send_command(sync, SyncCommand::RequestPairing { peer_id: pid })
 }
@@ -195,13 +203,11 @@ pub extern "C" fn manis_pocket_sync_accept_pairing(
     peer_id: *const c_char,
     pin: *const c_char,
 ) -> i32 {
-    let pid = match c_str_to_string(peer_id) {
-        Some(s) => s,
-        None => return ErrorCode::InvalidArg as i32,
+    let Some(pid) = c_str_to_string(peer_id) else {
+        return ErrorCode::InvalidArg as i32;
     };
-    let p = match c_str_to_string(pin) {
-        Some(s) => s,
-        None => return ErrorCode::InvalidArg as i32,
+    let Some(p) = c_str_to_string(pin) else {
+        return ErrorCode::InvalidArg as i32;
     };
     send_command(
         sync,
@@ -217,9 +223,8 @@ pub extern "C" fn manis_pocket_sync_reject_pairing(
     sync: *mut ManisPocketSync,
     peer_id: *const c_char,
 ) -> i32 {
-    let pid = match c_str_to_string(peer_id) {
-        Some(s) => s,
-        None => return ErrorCode::InvalidArg as i32,
+    let Some(pid) = c_str_to_string(peer_id) else {
+        return ErrorCode::InvalidArg as i32;
     };
     send_command(sync, SyncCommand::RejectPairing { peer_id: pid })
 }
@@ -229,9 +234,8 @@ pub extern "C" fn manis_pocket_sync_unpair(
     sync: *mut ManisPocketSync,
     peer_id: *const c_char,
 ) -> i32 {
-    let pid = match c_str_to_string(peer_id) {
-        Some(s) => s,
-        None => return ErrorCode::InvalidArg as i32,
+    let Some(pid) = c_str_to_string(peer_id) else {
+        return ErrorCode::InvalidArg as i32;
     };
     send_command(sync, SyncCommand::Unpair { peer_id: pid })
 }
@@ -243,9 +247,8 @@ pub extern "C" fn manis_pocket_sync_broadcast_item(
     sync: *mut ManisPocketSync,
     item_json: *const c_char,
 ) -> i32 {
-    let json = match c_str_to_string(item_json) {
-        Some(s) => s,
-        None => return ErrorCode::InvalidArg as i32,
+    let Some(json) = c_str_to_string(item_json) else {
+        return ErrorCode::InvalidArg as i32;
     };
     send_command(sync, SyncCommand::BroadcastItem { item_json: json })
 }
@@ -255,9 +258,8 @@ pub extern "C" fn manis_pocket_sync_broadcast_deletion(
     sync: *mut ManisPocketSync,
     item_id: *const c_char,
 ) -> i32 {
-    let id = match c_str_to_string(item_id) {
-        Some(s) => s,
-        None => return ErrorCode::InvalidArg as i32,
+    let Some(id) = c_str_to_string(item_id) else {
+        return ErrorCode::InvalidArg as i32;
     };
     send_command(sync, SyncCommand::BroadcastDeletion { item_id: id })
 }
@@ -267,9 +269,8 @@ pub extern "C" fn manis_pocket_sync_broadcast_update(
     sync: *mut ManisPocketSync,
     item_json: *const c_char,
 ) -> i32 {
-    let json = match c_str_to_string(item_json) {
-        Some(s) => s,
-        None => return ErrorCode::InvalidArg as i32,
+    let Some(json) = c_str_to_string(item_json) else {
+        return ErrorCode::InvalidArg as i32;
     };
     send_command(sync, SyncCommand::BroadcastUpdate { item_json: json })
 }
@@ -280,7 +281,7 @@ fn send_command(sync: *mut ManisPocketSync, cmd: SyncCommand) -> i32 {
     if sync.is_null() {
         return ErrorCode::InvalidArg as i32;
     }
-    log::info!("send_command: {:?}", cmd);
+    log::info!("send_command: {cmd:?}");
     with_state(sync, |state| {
         let guard = state.lock().unwrap();
         match guard.command_tx.send(cmd) {

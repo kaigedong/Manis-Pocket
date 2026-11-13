@@ -108,6 +108,7 @@ fn parse(line: &str) -> Option<IpcCommand> {
 }
 
 #[cfg(test)]
+#[cfg(test)]
 mod tests {
     use super::*;
 

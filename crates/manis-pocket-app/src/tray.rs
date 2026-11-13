@@ -193,7 +193,7 @@ fn screen_scale() -> f64 {
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSScreen;
     let scale: f64 = MainThreadMarker::new()
-        .and_then(|mtm| NSScreen::mainScreen(mtm))
+        .and_then(NSScreen::mainScreen)
         .map(|screen| screen.backingScaleFactor())
         .unwrap_or(1.0);
     SCREEN_SCALE.store(scale.to_bits(), std::sync::atomic::Ordering::Relaxed);
@@ -276,6 +276,7 @@ mod linux {
     }
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     /// The four menu-bar glyphs are committed PNGs, so a rename or a bad export

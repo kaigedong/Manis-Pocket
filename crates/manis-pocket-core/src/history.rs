@@ -305,77 +305,77 @@ impl HistoryManager {
     }
 
     pub fn sync_add_peer_address(&self, address: String) {
-        if let Ok(guard) = self.sync_engine.lock() {
-            if let Some(ref e) = *guard {
-                e.add_peer_address(&address);
-            }
+        if let Ok(guard) = self.sync_engine.lock()
+            && let Some(ref e) = *guard
+        {
+            e.add_peer_address(&address);
         }
     }
 
     pub fn sync_start_discovery(&self) {
-        if let Ok(guard) = self.sync_engine.lock() {
-            if let Some(ref e) = *guard {
-                e.start_discovery();
-            }
+        if let Ok(guard) = self.sync_engine.lock()
+            && let Some(ref e) = *guard
+        {
+            e.start_discovery();
         }
     }
 
     pub fn sync_stop_discovery(&self) {
-        if let Ok(guard) = self.sync_engine.lock() {
-            if let Some(ref e) = *guard {
-                e.stop_discovery();
-            }
+        if let Ok(guard) = self.sync_engine.lock()
+            && let Some(ref e) = *guard
+        {
+            e.stop_discovery();
         }
     }
 
     /// Restart discovery to find new peers.
     pub fn sync_refresh_discovery(&self) {
-        if let Ok(guard) = self.sync_engine.lock() {
-            if let Some(ref e) = *guard {
-                e.stop_discovery();
-                e.start_discovery();
-            }
+        if let Ok(guard) = self.sync_engine.lock()
+            && let Some(ref e) = *guard
+        {
+            e.stop_discovery();
+            e.start_discovery();
         }
     }
 
     pub fn sync_request_pairing(&self, peer_id: String) {
-        if let Ok(guard) = self.sync_engine.lock() {
-            if let Some(ref e) = *guard {
-                e.request_pairing(&peer_id);
-            }
+        if let Ok(guard) = self.sync_engine.lock()
+            && let Some(ref e) = *guard
+        {
+            e.request_pairing(&peer_id);
         }
     }
 
     pub fn sync_accept_pairing(&self, peer_id: String, pin: String) {
-        if let Ok(guard) = self.sync_engine.lock() {
-            if let Some(ref e) = *guard {
-                e.accept_pairing(&peer_id, &pin);
-            }
+        if let Ok(guard) = self.sync_engine.lock()
+            && let Some(ref e) = *guard
+        {
+            e.accept_pairing(&peer_id, &pin);
         }
     }
 
     pub fn sync_reject_pairing(&self, peer_id: String) {
-        if let Ok(guard) = self.sync_engine.lock() {
-            if let Some(ref e) = *guard {
-                e.reject_pairing(&peer_id);
-            }
+        if let Ok(guard) = self.sync_engine.lock()
+            && let Some(ref e) = *guard
+        {
+            e.reject_pairing(&peer_id);
         }
     }
 
     pub fn sync_unpair(&self, peer_id: String) {
-        if let Ok(guard) = self.sync_engine.lock() {
-            if let Some(ref e) = *guard {
-                e.unpair(&peer_id);
-            }
+        if let Ok(guard) = self.sync_engine.lock()
+            && let Some(ref e) = *guard
+        {
+            e.unpair(&peer_id);
         }
     }
 
     /// Broadcast a newly copied item to synced peers.
     pub fn sync_broadcast_item(&self, item: ClipboardItem) {
-        if let Ok(guard) = self.sync_engine.lock() {
-            if let Some(ref e) = *guard {
-                e.broadcast_item(&item);
-            }
+        if let Ok(guard) = self.sync_engine.lock()
+            && let Some(ref e) = *guard
+        {
+            e.broadcast_item(&item);
         }
     }
 
@@ -384,19 +384,19 @@ impl HistoryManager {
     /// `None` means the clipboard is empty. Callers must not call this for
     /// content the protocol cannot share: that would clear the peer.
     pub fn sync_observe_local_clipboard(&self, content: Option<ClipboardContent>) {
-        if let Ok(guard) = self.sync_engine.lock() {
-            if let Some(ref engine) = *guard {
-                engine.observe_local_clipboard(content);
-            }
+        if let Ok(guard) = self.sync_engine.lock()
+            && let Some(ref engine) = *guard
+        {
+            engine.observe_local_clipboard(content);
         }
     }
 
     /// Complete a remote clipboard update only after the platform clipboard write.
     pub fn sync_confirm_current_clipboard(&self, event_id: String, success: bool) {
-        if let Ok(guard) = self.sync_engine.lock() {
-            if let Some(ref engine) = *guard {
-                engine.confirm_current_clipboard(&event_id, success);
-            }
+        if let Ok(guard) = self.sync_engine.lock()
+            && let Some(ref engine) = *guard
+        {
+            engine.confirm_current_clipboard(&event_id, success);
         }
     }
 
@@ -414,19 +414,19 @@ impl HistoryManager {
 
     /// Broadcast a deletion to synced peers.
     pub fn sync_broadcast_deletion(&self, item_id: String) {
-        if let Ok(guard) = self.sync_engine.lock() {
-            if let Some(ref e) = *guard {
-                e.broadcast_deletion(&item_id);
-            }
+        if let Ok(guard) = self.sync_engine.lock()
+            && let Some(ref e) = *guard
+        {
+            e.broadcast_deletion(&item_id);
         }
     }
 
     /// Broadcast an update to synced peers.
     pub fn sync_broadcast_update(&self, item: ClipboardItem) {
-        if let Ok(guard) = self.sync_engine.lock() {
-            if let Some(ref e) = *guard {
-                e.broadcast_update(&item);
-            }
+        if let Ok(guard) = self.sync_engine.lock()
+            && let Some(ref e) = *guard
+        {
+            e.broadcast_update(&item);
         }
     }
 
@@ -434,10 +434,10 @@ impl HistoryManager {
 
     /// Request a file download from a peer.
     pub fn request_file(&self, peer_id: String, file_path: String) {
-        if let Ok(guard) = self.sync_engine.lock() {
-            if let Some(ref e) = *guard {
-                e.request_file(&peer_id, &file_path);
-            }
+        if let Ok(guard) = self.sync_engine.lock()
+            && let Some(ref e) = *guard
+        {
+            e.request_file(&peer_id, &file_path);
         }
     }
 
@@ -514,6 +514,7 @@ fn is_transient(content_type: &str) -> bool {
     )
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

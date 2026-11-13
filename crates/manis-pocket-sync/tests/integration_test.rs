@@ -3,19 +3,19 @@ use std::time::Duration;
 
 use manis_pocket_sync::state::{SharedState, SyncCommand, SyncState};
 
-/// Build a NetworkManager and run it on a dedicated thread (same as FFI does).
+/// Build a `NetworkManager` and run it on a dedicated thread (same as FFI does).
 fn spawn_node(
     device_name: &str,
     device_id: &str,
     port: u16,
-    events: Arc<Mutex<Vec<String>>>,
+    events: &Arc<Mutex<Vec<String>>>,
 ) -> tokio::sync::mpsc::UnboundedSender<SyncCommand> {
     let state = SyncState::new(device_name, device_id).unwrap();
     let shared: SharedState = Arc::new(std::sync::Mutex::new(state));
 
     // Register the unified event callback
     {
-        let mut guard = shared.lock().unwrap();
+        let guard = shared.lock().unwrap();
         let ev = events.clone();
         *guard.on_event.lock() = Some(Box::new(move |json: &str| {
             ev.lock().unwrap().push(json.to_string());
@@ -45,10 +45,7 @@ fn spawn_node(
         rt.block_on(async move { nm.run().await });
     });
 
-    println!(
-        "Spawned node '{}' on port {} with peer_id {}",
-        device_name, port, peer_id
-    );
+    println!("Spawned node '{device_name}' on port {port} with peer_id {peer_id}");
     cmd_tx
 }
 
@@ -60,19 +57,19 @@ fn free_port() -> u16 {
         .expect("a free port")
 }
 
-fn wait_and_report(events: Arc<Mutex<Vec<String>>>, label: &str, secs: u64) {
-    println!("\n--- Waiting {}s for {} ---", secs, label);
+fn wait_and_report(events: &Arc<Mutex<Vec<String>>>, label: &str, secs: u64) {
+    println!("\n--- Waiting {secs}s for {label} ---");
     std::thread::sleep(Duration::from_secs(secs));
 
     let evts = events.lock().unwrap();
-    println!("\n=== Captured events ({}) ===", label);
+    println!("\n=== Captured events ({label}) ===");
     for e in evts.iter() {
-        println!("  {}", e);
+        println!("  {e}");
     }
     println!("=== Total: {} events ===\n", evts.len());
 }
 
-/// Test: manually dial from NodeA to NodeB
+/// Test: manually dial from `NodeA` to `NodeB`
 #[test]
 fn test_manual_dial_two_nodes() {
     let _ = env_logger::builder()
@@ -86,8 +83,8 @@ fn test_manual_dial_two_nodes() {
     let port_a = free_port();
     let port_b = free_port();
 
-    let cmd_tx_a = spawn_node("NodeA", "device-a", port_a, events.clone());
-    let cmd_tx_b = spawn_node("NodeB", "device-b", port_b, events.clone());
+    let cmd_tx_a = spawn_node("NodeA", "device-a", port_a, &events);
+    let cmd_tx_b = spawn_node("NodeB", "device-b", port_b, &events);
 
     std::thread::sleep(Duration::from_secs(2));
 
@@ -96,7 +93,7 @@ fn test_manual_dial_two_nodes() {
         address: format!("/ip4/127.0.0.1/tcp/{port_b}"),
     });
 
-    wait_and_report(events.clone(), "manual dial", 10);
+    wait_and_report(&events, "manual dial", 10);
 
     let evts = events.lock().unwrap();
     let discovered = evts.iter().any(|e| e.contains("peer_discovered"));
@@ -108,13 +105,12 @@ fn test_manual_dial_two_nodes() {
 
     println!("has_discovered={}, errors={}", discovered, errors.len());
     for e in &errors {
-        eprintln!("  ERROR: {}", e);
+        eprintln!("  ERROR: {e}");
     }
 
     assert!(
         discovered,
-        "Should discover peer after manual dial. Errors: {:?}",
-        errors
+        "Should discover peer after manual dial. Errors: {errors:?}"
     );
 
     let _ = cmd_tx_a.send(SyncCommand::Shutdown);
@@ -130,8 +126,8 @@ fn test_manual_dial_ip_port_format() {
 
     let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
-    let cmd_tx_a = spawn_node("NodeA", "device-a", 31774, events.clone());
-    let cmd_tx_b = spawn_node("NodeB", "device-b", 31775, events.clone());
+    let cmd_tx_a = spawn_node("NodeA", "device-a", 31774, &events);
+    let cmd_tx_b = spawn_node("NodeB", "device-b", 31775, &events);
 
     std::thread::sleep(Duration::from_secs(2));
 
@@ -141,7 +137,7 @@ fn test_manual_dial_ip_port_format() {
         address: "127.0.0.1:31775".to_string(),
     });
 
-    wait_and_report(events.clone(), "IP:Port format dial", 10);
+    wait_and_report(&events, "IP:Port format dial", 10);
 
     let evts = events.lock().unwrap();
     let discovered = evts.iter().any(|e| e.contains("peer_discovered"));

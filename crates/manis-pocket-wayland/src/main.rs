@@ -647,6 +647,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 #[cfg(test)]
+#[cfg(test)]
 mod tests {
     use super::*;
     use base64::engine::general_purpose::STANDARD;

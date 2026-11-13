@@ -1426,6 +1426,24 @@ fn open_settings(cx: &mut App) {
 }
 
 /// Opens the history panel. Called at launch and by the global shortcut.
+/// Id of the panel window while it exists.
+///
+/// `App::windows()` still lists a window after `remove_window()`, so asking it
+/// whether the panel is up answers "yes" forever after the first close and the
+/// panel can never be opened again. The id is cleared by the window-closed
+/// observer, which is the only reliable signal.
+static PANEL_WINDOW: std::sync::Mutex<Option<gpui::WindowId>> = std::sync::Mutex::new(None);
+
+fn panel_window_id() -> Option<gpui::WindowId> {
+    PANEL_WINDOW.lock().ok().and_then(|guard| *guard)
+}
+
+fn set_panel_window(id: Option<gpui::WindowId>) {
+    if let Ok(mut guard) = PANEL_WINDOW.lock() {
+        *guard = id;
+    }
+}
+
 fn open_panel(cx: &mut App) {
     let settings = settings::Settings::load(&storage_path());
     let panel = size(
@@ -1433,7 +1451,7 @@ fn open_panel(cx: &mut App) {
         px(settings.window_height as f32 + PANEL_MARGIN * 2.0),
     );
     let bounds = panel_bounds(cx, panel, &settings);
-    gpui_kit::open_window(
+    let (handle, _) = gpui_kit::open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             // `Floating`, not `PopUp`: gpui-macos implements `PopUp` as a
@@ -1477,25 +1495,49 @@ fn open_panel(cx: &mut App) {
         },
     )
     .expect("open history panel");
+    // Remember which window is the panel, so a second click can find it and a
+    // closed one is not mistaken for an open one.
+    set_panel_window(Some(handle.window_id()));
+    // Without a window of its own the app is inactive, and a new window made in
+    // that state is not ordered to the front, so the panel would exist unseen.
+    cx.activate(true);
+    let _ = handle.update(cx, |_, window, _| window.activate_window());
 }
 
 /// Opens the panel unless it is already on screen.
 fn open_panel_if_needed(cx: &mut App) {
-    if cx.windows().is_empty() {
+    if panel_window_id().is_none() {
         open_panel(cx);
     }
 }
 
 /// Shows the panel if it is closed, closes it if it is open.
 fn toggle_panel(cx: &mut App) {
-    let windows = cx.windows();
-    if windows.is_empty() {
+    let Some(id) = panel_window_id() else {
         open_panel(cx);
         return;
+    };
+    let ok = close_panel_window(cx, id);
+    if !ok {
+        // The window was already gone; forget it and open a fresh one.
+        set_panel_window(None);
+        open_panel(cx);
     }
-    for handle in windows {
-        let _ = handle.update(cx, |_view, window, _cx| window.remove_window());
+}
+
+/// Closes the panel window, reporting whether it still existed.
+fn close_panel_window(cx: &mut App, id: gpui::WindowId) -> bool {
+    for handle in cx.windows() {
+        if handle.window_id() == id {
+            let closed = handle
+                .update(cx, |_, window, _| window.remove_window())
+                .is_ok();
+            if closed {
+                return true;
+            }
+        }
     }
+    false
 }
 
 /// The SwiftUI build opens the panel with ⇧⌘C (modifiers 768 + key code 8).
@@ -1649,6 +1691,15 @@ fn main() {
         // resident app only quits when asked to.
         cx.set_quit_mode(gpui::QuitMode::Explicit);
         register_popup_hotkey();
+
+        // The panel is created on demand, so its id has to be forgotten the
+        // moment the window really closes.
+        let closed = cx.on_window_closed(|_cx, id| {
+            if panel_window_id() == Some(id) {
+                set_panel_window(None);
+            }
+        });
+        std::mem::forget(closed);
 
         // The tray only reports intent; the window handling stays here.
         let (tray_tx, mut tray_rx) = futures::channel::mpsc::unbounded();

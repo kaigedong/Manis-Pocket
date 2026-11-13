@@ -285,7 +285,7 @@ impl ListDelegate for HistoryList {
         // Trailing slot: the copy and delete buttons while hovered, otherwise the
         // ⌘N hint the SwiftUI build shows.
         let hovering = self.hovered.as_deref() == Some(item.id.as_str());
-        let trailing = if hovering {
+        let trailing_inner = if hovering {
             let copy_id = item.id.clone();
             let copy_history = self.history.clone();
             let delete_id = item.id.clone();
@@ -373,6 +373,16 @@ impl ListDelegate for HistoryList {
                 .child(SharedString::from(format!("⌘{}", ix.row + 1)))
                 .into_any_element()
         };
+        // Hovering swaps buttons in for the hint; a fixed box keeps the row from
+        // changing size under the pointer.
+        let trailing = div()
+            .flex_shrink_0()
+            .h(px(18.0))
+            .flex()
+            .items_center()
+            .justify_end()
+            .child(trailing_inner)
+            .into_any_element();
 
         Some(
             ListItem::new(("row", ix.row))
@@ -408,8 +418,13 @@ impl ListDelegate for HistoryList {
                     if command {
                         if let Some(panel) = panel_handle.as_ref().and_then(|panel| panel.upgrade())
                         {
-                            panel.update(cx, |panel, cx| {
-                                panel.toggle_checked(click_id.clone(), cx);
+                            // Updating the panel touches the list, which cannot
+                            // happen while the list is being updated; wait a beat.
+                            let id = click_id.clone();
+                            window.defer(cx, move |_window, cx| {
+                                let _ = panel.update(cx, |panel, cx| {
+                                    panel.toggle_checked(id.clone(), cx);
+                                });
                             });
                         }
                         return;
@@ -429,11 +444,15 @@ impl ListDelegate for HistoryList {
     ) {
         self.selected = ix;
         // Decoding belongs here, not in `render`: doing it while painting kept
-        // the window from ever appearing.
+        // the window from ever appearing. It also has to wait: this runs inside
+        // the list's own update, and the panel's loader reads the list, which
+        // aborts with "cannot read ListState while it is already being updated".
         if let Some(panel) = self.panel.as_ref().and_then(|panel| panel.upgrade()) {
-            panel.update(cx, |panel, cx| {
-                panel.load_preview_image(cx);
-                cx.notify();
+            cx.defer_in(_window, move |_state, _window, cx| {
+                let _ = panel.update(cx, |panel, cx| {
+                    panel.load_preview_image(cx);
+                    cx.notify();
+                });
             });
         }
     }

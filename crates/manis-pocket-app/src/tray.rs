@@ -35,6 +35,20 @@ pub enum TrayCommand {
 
 /// Creates the status item and reports whether one exists. The tray lives for
 /// the whole process, so it deliberately leaks its platform handle.
+/// Swaps the status item's icon so the settings picker applies without a restart.
+/// Linux keeps the icon name in its D-Bus item, which is rebuilt on the next start.
+pub fn set_icon(variant: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::set_icon(variant)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = variant;
+        false
+    }
+}
+
 pub fn install(tx: UnboundedSender<TrayCommand>, menu_icon: &str) -> bool {
     #[cfg(target_os = "macos")]
     {
@@ -43,8 +57,7 @@ pub fn install(tx: UnboundedSender<TrayCommand>, menu_icon: &str) -> bool {
 
     #[cfg(target_os = "linux")]
     {
-        let _ = menu_icon;
-        linux::install(tx)
+        linux::install(tx, menu_icon)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -154,6 +167,18 @@ mod macos {
     }
 
     /// The menu-bar glyph for the `menuIcon` setting.
+    /// Replaces the menu-bar icon of the status item this process installed.
+    pub fn set_icon(variant: &str) -> bool {
+        let Some(icon) = load_icon(variant) else {
+            return false;
+        };
+        STATUS_ICON.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .is_some_and(|tray| tray.set_icon_templated(Some(icon)).is_ok())
+        })
+    }
+
     fn load_icon(variant: &str) -> Option<Icon> {
         let bytes: &[u8] = match variant {
             "clipboard" => include_bytes!("../assets/tray/tray-clipboard.png"),
@@ -208,6 +233,8 @@ mod linux {
 
     struct StatusItem {
         tx: UnboundedSender<TrayCommand>,
+        /// The icon theme name this item draws.
+        icon: String,
     }
 
     impl ksni::Tray for StatusItem {
@@ -224,7 +251,7 @@ mod linux {
 
         /// A themed icon name, so the bar draws it in its own style.
         fn icon_name(&self) -> String {
-            "edit-paste".into()
+            self.icon.clone()
         }
 
         fn activate(&mut self, _x: i32, _y: i32) {
@@ -263,8 +290,20 @@ mod linux {
         }
     }
 
-    pub fn install(tx: UnboundedSender<TrayCommand>) -> bool {
-        match (StatusItem { tx }).spawn() {
+    /// The icon theme's name for each of the variants, so the picker means the
+    /// same thing on both platforms.
+    pub fn theme_icon_name(variant: &str) -> String {
+        match variant {
+            "scissors" => "edit-cut",
+            "paperclip" => "mail-attachment",
+            _ => "edit-paste",
+        }
+        .to_string()
+    }
+
+    pub fn install(tx: UnboundedSender<TrayCommand>, variant: &str) -> bool {
+        let icon = theme_icon_name(variant);
+        match (StatusItem { tx, icon }).spawn() {
             Ok(handle) => {
                 // The service owns a background thread; the handle only has to
                 // stay alive for the process, which it does by being leaked.
@@ -294,5 +333,19 @@ mod tests {
                 .to_rgba8();
             assert!(image.width() >= 16 && image.height() >= 16);
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_icon_tests {
+    #[test]
+    fn each_variant_maps_to_a_theme_icon() {
+        assert_eq!(super::linux::theme_icon_name("scissors"), "edit-cut");
+        assert_eq!(
+            super::linux::theme_icon_name("paperclip"),
+            "mail-attachment"
+        );
+        assert_eq!(super::linux::theme_icon_name("clipboard"), "edit-paste");
+        assert_eq!(super::linux::theme_icon_name("manispocket"), "edit-paste");
     }
 }

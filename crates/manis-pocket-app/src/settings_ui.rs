@@ -150,6 +150,7 @@ fn pick_row(
                 .on_click(cx.listener(move |this, _, _, cx| {
                     set(&mut this.settings, value);
                     this.save();
+                    apply_live(&this.settings);
                     cx.notify();
                 })),
         );
@@ -161,6 +162,13 @@ fn pick_row(
         .child(div().text_sm().child(label))
         .child(picker)
         .into_any_element()
+}
+
+/// Settings that take effect without a restart. The rest are read when the
+/// window, the tray or the engine is built.
+fn apply_live(settings: &Settings) {
+    // A missing status item is not a failure: the tray may be turned off.
+    let _ = crate::tray::set_icon(&settings.menu_icon);
 }
 
 /// A labelled row whose control is arbitrary.

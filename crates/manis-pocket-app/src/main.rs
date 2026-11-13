@@ -370,7 +370,8 @@ impl ListDelegate for HistoryList {
                 } else {
                     gpui::black().opacity(0.35)
                 })
-                .child(SharedString::from(pin))
+                // Show the modifier: a bare letter would read as "type e".
+                .child(SharedString::from(format!("⌘{pin}")))
                 .into_any_element()
         } else {
             div()
@@ -725,23 +726,39 @@ impl HistoryPanel {
     /// Copies the row whose hint matches `pressed` — a pinned item's letter, or
     /// the row number shown for the first nine entries.
     fn copy_by_hint(&mut self, pressed: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let id = {
-            let items = self.list.read(cx).delegate().items.clone();
-            let mut found = None;
-            for (index, item) in items.iter().enumerate() {
-                if rows::hint_matches(pressed, item.pin.as_deref(), index) {
-                    found = Some(item.id.clone());
-                    break;
-                }
-            }
-            found
-        };
-        let Some(id) = id else {
+        let Some(id) = self.hint_target(pressed, cx) else {
             return;
         };
         if copy_entry_to_clipboard(&self.history, &id) {
             window.remove_window();
         }
+    }
+
+    /// The entry a pressed hint refers to, if any.
+    fn hint_target(&self, pressed: &str, cx: &Context<Self>) -> Option<String> {
+        let items = self.list.read(cx).delegate().items.clone();
+        items
+            .iter()
+            .enumerate()
+            .find(|(index, item)| rows::hint_matches(pressed, item.pin.as_deref(), *index))
+            .map(|(_, item)| item.id.clone())
+    }
+
+    /// Copies the entry whose hint matches, then pastes it into the frontmost app.
+    fn paste_by_hint(&mut self, pressed: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.hint_target(pressed, cx) else {
+            return;
+        };
+        if !copy_entry_to_clipboard(&self.history, &id) {
+            return;
+        }
+        window.remove_window();
+        std::thread::spawn(|| {
+            // The target app reads the clipboard on paste; a short pause keeps
+            // the keystroke from arriving before the clipboard is readable.
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            crate::clipboard::paste_into_frontmost();
+        });
     }
 
     /// Pins or unpins the selected entry. Pins take the next free letter, which
@@ -1292,23 +1309,16 @@ impl Render for HistoryPanel {
                     && !modifiers.alt
                     && !modifiers.control
                     && key.len() == 1
-                    && key.as_bytes()[0].is_ascii_digit()
                 {
-                    // ⌘N copies the entry the row hints at.
-                    if let Some(index) = key.parse::<usize>().ok().filter(|n| (1..=9).contains(n)) {
-                        this.copy_by_hint(&(index - 1).to_string(), window, cx);
-                    }
-                } else if !modifiers.platform && !modifiers.alt && !modifiers.control {
-                    // The SwiftUI build copies the entry whose hint matches the
-                    // pressed key, so a pinned item's letter is a direct shortcut.
-                    // Only while the search box is idle — otherwise typing a
-                    // query would copy and close the panel.
-                    let typing = this.input.read(cx).focus_handle(cx).is_focused(window);
-                    if !typing {
-                        if let Some(character) = event.keystroke.key_char.clone() {
-                            this.copy_by_hint(&character, window, cx);
-                        }
-                    }
+                    // ⌘ + the row's hint: a pinned item's letter, or the number
+                    // the first nine rows show.
+                    this.copy_by_hint(key, window, cx);
+                } else if modifiers.alt && !modifiers.platform && !modifiers.control && key.len() == 1
+                {
+                    // ⌥ + the hint pastes instead of copying, as in the SwiftUI
+                    // build where the letter is the same and the modifier picks
+                    // the action.
+                    this.paste_by_hint(key, window, cx);
                 }
             }))
             // Room for the card's shadow; the window itself is transparent so

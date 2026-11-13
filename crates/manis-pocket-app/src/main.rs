@@ -224,6 +224,42 @@ fn store_allowed(copy: &clipboard::Copy, settings: &settings::Settings) -> bool 
     }
 }
 
+/// Keeps a pre-existing history from being trimmed by the default size limit.
+///
+/// On the very first run the default of 500 would delete everything older the next
+/// time something is copied, so the limit is raised once to whatever is already
+/// stored. A size the user has chosen is never overridden: once a settings file
+/// exists, it is theirs.
+/// The limit to keep on a first run. A history already larger than the limit wins,
+/// so the default does not delete it; `unlimited` means no limit at all.
+fn first_run_limit(limit: i64, stored: i64, unlimited: bool) -> i64 {
+    if unlimited || limit >= stored {
+        limit
+    } else {
+        stored
+    }
+}
+
+fn protect_existing_history(history: &HistoryManager, database: &str) {
+    if settings::settings_path(database).exists() {
+        return;
+    }
+    let stored = history.count().unwrap_or(0);
+    if stored == 0 {
+        return;
+    }
+    let mut settings = settings::Settings::load(database);
+    let limit = first_run_limit(
+        settings.history_size.max(0),
+        stored,
+        settings.unlimited_history,
+    );
+    if limit != settings.history_size {
+        settings.history_size = limit;
+        settings.save(database);
+    }
+}
+
 /// Imports the SwiftUI build's history the first time this build runs.
 ///
 /// The old app kept its entries in a SwiftData store next to ours. Nobody notices a
@@ -563,6 +599,7 @@ fn main() {
     let shared_history =
         Arc::new(HistoryManager::new(storage_path()).expect("open history database"));
     import_legacy_history(&shared_history);
+    protect_existing_history(&shared_history, &storage_path());
     let _ = HISTORY.set(shared_history);
 
     gpui_kit::application()
@@ -816,6 +853,17 @@ mod import_tests {
             &Copy::Image(vec![1, 2, 3]),
             &settings
         ));
+    }
+
+    #[test]
+    fn a_first_run_raises_the_limit_but_keeps_one_that_fits() {
+        // A history bigger than the limit would be trimmed by the default.
+        assert_eq!(crate::first_run_limit(500, 1004, false), 1004);
+        // A limit that already fits is left alone, including one the user picked.
+        assert_eq!(crate::first_run_limit(2000, 1004, false), 2000);
+        assert_eq!(crate::first_run_limit(100, 100, false), 100);
+        // Unlimited means the limit is irrelevant.
+        assert_eq!(crate::first_run_limit(500, 1004, true), 500);
     }
 
     #[test]

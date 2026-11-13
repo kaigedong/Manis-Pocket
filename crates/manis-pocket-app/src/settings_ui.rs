@@ -598,6 +598,7 @@ impl SettingsView {
             Pane::Advanced => {
                 rows.push(note(format!("数据库：{}", self.database_path)));
                 rows.push(note(format!("设备名：{}", self.settings.sync_device_name)));
+                rows.push(note("降低上限后，会在下次复制时裁掉最旧的未固定条目"));
                 rows.push(note(format!(
                     "历史上限：{}（当前库共 {} 条）",
                     self.settings.history_size,

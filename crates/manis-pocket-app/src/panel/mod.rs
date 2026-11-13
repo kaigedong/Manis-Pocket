@@ -45,18 +45,11 @@ impl HistoryPanel {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let database = storage_path();
         let history = history();
-        let mut settings = settings::Settings::load(&database);
+        let settings = settings::Settings::load(&database);
         // Metadata only: payloads are fetched on demand so startup does not
         // depend on how much content the history holds.
         let all_metadata = history.load_metadata().unwrap_or_default();
         let all_items = all_metadata.clone();
-        // A default smaller than what is already stored would delete entries the
-        // first time something new is copied, so never load below the real size.
-        let stored = all_items.len() as i64;
-        if !settings.unlimited_history && settings.history_size < stored {
-            settings.history_size = stored;
-            settings.save(&database);
-        }
 
         let input =
             cx.new(|cx| InputState::new(window, cx).placeholder(SharedString::from("搜索")));

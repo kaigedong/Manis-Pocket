@@ -46,7 +46,7 @@ case "${1:-build}" in
     ;;
   windows)
     # Lists what Hyprland currently sees, so a launched app can be confirmed.
-    remote "sig=\$(tr '\\0' '\\n' < /proc/\$(pgrep -f manis-pocket-wayland | head -1)/environ | grep HYPRLAND_INSTANCE_SIGNATURE | cut -d= -f2); env HYPRLAND_INSTANCE_SIGNATURE=\$sig XDG_RUNTIME_DIR=/run/user/\$(id -u) hyprctl clients 2>&1 | grep -E 'title:|class:'"
+    remote "sig=\$(tr '\\0' '\\n' < /proc/\$(pgrep -x manis-pocket | head -1)/environ | grep HYPRLAND_INSTANCE_SIGNATURE | cut -d= -f2); env HYPRLAND_INSTANCE_SIGNATURE=\$sig XDG_RUNTIME_DIR=/run/user/\$(id -u) hyprctl clients 2>&1 | grep -E 'title:|class:'"
     ;;
   *)
     echo "usage: $0 {build|check|run [seconds]|windows}" >&2

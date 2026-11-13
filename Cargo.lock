@@ -5220,17 +5220,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "manis-pocket-wayland"
-version = "0.1.0"
-dependencies = [
- "base64",
- "libp2p",
- "manis-pocket-sync",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "markdown"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

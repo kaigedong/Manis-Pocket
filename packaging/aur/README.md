@@ -1,8 +1,7 @@
 # Manis Pocket AUR binary package
 
 `manis-pocket-bin` installs the GPUI desktop app `/usr/bin/manis-pocket`, its
-application menu entry and icon, and the Wayland sync backend at
-`/usr/bin/manis-pocket-wayland`. It repackages the Arch Linux package that the
+application menu entry and icon. It repackages the Arch Linux package that the
 release workflow attaches to the product release.
 
 The runtime dependency on `wl-clipboard` supplies `wl-copy` and `wl-paste`.

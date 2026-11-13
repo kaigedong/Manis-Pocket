@@ -203,13 +203,26 @@ fn import_legacy_history(history: &HistoryManager) {
     if history.count().unwrap_or(1) > 0 {
         return;
     }
-    let Some(store) = legacy_swiftdata_path() else {
+    if let Some(store) = legacy_swiftdata_path() {
+        match history.migrate_from_swiftdata(store.clone()) {
+            Ok(0) => {}
+            Ok(count) => eprintln!("imported {count} entries from {store}"),
+            Err(error) => eprintln!("could not import {store}: {error}"),
+        }
+    }
+    // The GTK build kept a plain JSON array next to the database it never shared
+    // with this one. Renaming it afterwards keeps a cleared history from refilling.
+    let json = std::path::Path::new(&storage_path()).with_file_name("history.json");
+    if !json.exists() {
         return;
-    };
-    match history.migrate_from_swiftdata(store.clone()) {
+    }
+    match history.import_json_history(json.to_string_lossy().as_ref()) {
         Ok(0) => {}
-        Ok(count) => eprintln!("imported {count} entries from {store}"),
-        Err(error) => eprintln!("could not import {store}: {error}"),
+        Ok(count) => {
+            eprintln!("imported {count} entries from {}", json.display());
+            let _ = std::fs::rename(&json, json.with_extension("json.imported"));
+        }
+        Err(error) => eprintln!("could not import {}: {error}", json.display()),
     }
 }
 

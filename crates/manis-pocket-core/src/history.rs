@@ -255,6 +255,63 @@ impl HistoryManager {
             .migrate_from_swiftdata(&swiftdata_path)
     }
 
+    /// Imports the history the GTK build kept as a JSON array of strings, newest
+    /// first.
+    ///
+    /// Entries are spaced a second apart so the newest stays newest; an empty or
+    /// missing file imports nothing.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the file cannot be read or is not a JSON array
+    /// of strings.
+    pub fn import_json_history(&self, path: &str) -> Result<u64, CoreError> {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => {
+                return Err(CoreError::Storage {
+                    msg: format!("could not read {path}: {error}"),
+                });
+            }
+        };
+        let entries: Vec<String> =
+            serde_json::from_str(&text).map_err(|error| CoreError::Storage {
+                msg: format!("{path} is not a history file: {error}"),
+            })?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as i64)
+            .unwrap_or_default();
+        let mut imported = 0;
+        for (index, entry) in entries.iter().enumerate() {
+            if entry.trim().is_empty() {
+                continue;
+            }
+            let timestamp = now - (index as i64 * 1000);
+            let item = ClipboardItem {
+                id: uuid::Uuid::new_v4().to_string(),
+                application: None,
+                first_copied_at: timestamp,
+                last_copied_at: timestamp,
+                number_of_copies: 1,
+                pin: None,
+                title: entry.clone(),
+                contents: vec![ClipboardContent {
+                    content_type: "public.utf8-plain-text".into(),
+                    value: Some(entry.as_bytes().to_vec()),
+                }],
+                sync_timestamp: timestamp,
+                sync_source: None,
+                sync_deleted: false,
+            };
+            if self.add(item, i32::MAX, true).is_ok() {
+                imported += 1;
+            }
+        }
+        Ok(imported)
+    }
+
     // ── Sync ──────────────────────────────────────────────────────
 
     /// Start the P2P sync engine. The observer receives all sync events.
@@ -550,6 +607,59 @@ mod tests {
             sync_source: None,
             sync_deleted: false,
         }
+    }
+
+    #[test]
+    fn a_json_history_is_imported_newest_first() {
+        let directory = std::env::temp_dir().join(format!("manis-json-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("temp dir");
+        let path = directory.join("history.json");
+        std::fs::write(&path, r#"["newest","older","with \"quotes\"",""]"#).expect("write");
+
+        let manager = HistoryManager::new(":memory:".to_string()).expect("open");
+        let imported = manager
+            .import_json_history(path.display().to_string().as_str())
+            .expect("import");
+        // The empty entry is skipped.
+        assert_eq!(imported, 3);
+
+        let items = manager.load_metadata().expect("metadata");
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].title, "newest");
+        assert_eq!(items[1].title, "older");
+        assert_eq!(items[2].title, "with \"quotes\"");
+        assert!(
+            items[0].last_copied_at > items[2].last_copied_at,
+            "the newest entry must stay the newest"
+        );
+
+        let contents = manager.contents(items[0].id.clone()).expect("contents");
+        assert_eq!(contents[0].value.as_deref(), Some(&b"newest"[..]));
+
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn a_missing_or_broken_json_history_is_not_fatal() {
+        let manager = HistoryManager::new(":memory:".to_string()).expect("open");
+        assert_eq!(
+            manager
+                .import_json_history("/nonexistent/history.json")
+                .expect("missing file is fine"),
+            0
+        );
+
+        let directory = std::env::temp_dir().join(format!("manis-json-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("temp dir");
+        let path = directory.join("history.json");
+        std::fs::write(&path, "not json at all").expect("write");
+        assert!(
+            manager
+                .import_json_history(path.display().to_string().as_str())
+                .is_err(),
+            "a broken file must be reported"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]

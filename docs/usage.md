@@ -19,8 +19,13 @@ Manis Pocket 是同一个 GPUI（Rust）程序，macOS 和 Linux 共用一套代
 | macOS | `~/Library/Application Support/ManisPocket/manispocket.db`，设置在同目录 `settings.json` |
 | Linux | `$XDG_DATA_HOME/manis-pocket/manispocket.db`（通常是 `~/.local/share/manis-pocket/`） |
 
-首次启动时，如果新库还是空的，会尝试导入 SwiftUI 版本留下的 SwiftData 存储
-（`~/Library/Application Support/ManisPocket/default.store`）；导入失败只记录，不会阻止启动。
+首次启动时，如果新库还是空的，会尝试导入旧版本留下的历史：
+
+- macOS：SwiftUI 版的 SwiftData 存储（`~/Library/Application Support/ManisPocket/default.store`）。
+- Linux：GTK 版的 `history.json`（与新库同目录），导入成功后改名为 `history.json.imported`，
+  这样以后清空历史不会又被它填满。
+
+导入失败只记录原因，不会阻止启动。
 
 ## 设备同步
 

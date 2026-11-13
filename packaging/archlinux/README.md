@@ -1,9 +1,10 @@
 # Arch Linux package from this checkout
 
 This PKGBUILD builds Manis Pocket for Linux from the current repository
-checkout. It installs the GTK4 app `/usr/bin/manis-pocket`, a desktop
+checkout. It installs the GPUI desktop app `/usr/bin/manis-pocket`, a desktop
 entry and icon, the sync backend `/usr/bin/manis-pocket-wayland`, and the MIT
-license. GTK4 and `wl-clipboard` are runtime dependencies. The GUI handles
+license. `wl-clipboard` and the Wayland/XKB/Fontconfig runtime libraries are
+dependencies. The GUI handles
 interactive PIN confirmation.
 
 On Arch Linux x86_64 with `base-devel` installed:

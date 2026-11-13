@@ -1,6 +1,6 @@
 # Manis Pocket AUR binary package
 
-`manis-pocket-bin` installs the native GTK4 app `/usr/bin/manis-pocket`, its
+`manis-pocket-bin` installs the GPUI desktop app `/usr/bin/manis-pocket`, its
 application menu entry and icon, and the Wayland sync backend at
 `/usr/bin/manis-pocket-wayland`. It repackages the Arch Linux package that the
 release workflow attaches to the product release.

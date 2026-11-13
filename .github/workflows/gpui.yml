@@ -50,10 +50,10 @@ jobs:
       - name: System dependencies
         run: |
           sudo apt-get update
+          # No GTK: the tray on Linux is a D-Bus status notifier (ksni).
           sudo apt-get install -y --no-install-recommends \
             libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev \
-            libvulkan-dev libfontconfig-dev libssl-dev pkg-config \
-            libgtk-3-dev libayatana-appindicator3-dev
+            libvulkan-dev libfontconfig-dev libssl-dev pkg-config
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

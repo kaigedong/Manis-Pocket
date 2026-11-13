@@ -48,8 +48,8 @@ jobs:
           sudo apt-get update
           # No GTK: the tray on Linux is a D-Bus status notifier (ksni).
           sudo apt-get install -y --no-install-recommends \
-            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev \
-            libvulkan-dev libfontconfig-dev libssl-dev pkg-config
+            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev \
+            libfreetype-dev libvulkan-dev libfontconfig-dev libssl-dev pkg-config
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

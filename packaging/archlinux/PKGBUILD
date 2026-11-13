@@ -10,7 +10,7 @@ arch=('x86_64')
 url='https://github.com/kaigedong/Manis-Pocket'
 license=('MIT')
 # wl-copy and wl-paste are executed at runtime, so namcap cannot detect this dependency.
-depends=('glibc' 'libgcc' 'wl-clipboard' 'wayland' 'libxkbcommon' 'fontconfig' 'vulkan-icd-loader')
+depends=('glibc' 'libgcc' 'wl-clipboard' 'wayland' 'libxkbcommon' 'libxkbcommon-x11' 'libxcb' 'freetype2' 'fontconfig' 'vulkan-icd-loader')
 makedepends=('cargo' 'git' 'rust')
 options=('!lto')
 source=()

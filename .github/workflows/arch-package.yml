@@ -26,7 +26,7 @@ jobs:
       image: archlinux:base-devel
     steps:
       - name: Install build dependencies
-        run: pacman -Syu --noconfirm --needed git rust wl-clipboard namcap wayland libxkbcommon fontconfig vulkan-icd-loader
+        run: pacman -Syu --noconfirm --needed git rust wl-clipboard namcap wayland libxkbcommon libxkbcommon-x11 libxcb freetype2 fontconfig vulkan-icd-loader
 
       - uses: actions/checkout@v4
         with:

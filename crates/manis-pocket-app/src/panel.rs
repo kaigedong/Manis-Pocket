@@ -532,6 +532,8 @@ pub(crate) struct HistoryPanel {
     checked: Vec<String>,
     /// Decoded preview images, keyed by entry id: decoding a PNG on every frame
     /// would make the panel stutter on large screenshots.
+    /// Set while the footer's "clear everything" is waiting for a second click.
+    confirm_clear_all: bool,
     /// How many rows the list is showing, mirrored so the render never has to
     /// read the list entity.
     visible_count: usize,
@@ -653,6 +655,7 @@ impl HistoryPanel {
                         .collect()
                 })
                 .unwrap_or_default(),
+            confirm_clear_all: false,
             visible_count: 0,
             selected_id: None,
             preview_images: std::collections::HashMap::new(),
@@ -807,6 +810,7 @@ impl HistoryPanel {
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.confirm_clear_all = false;
         // The image cache is filled from the current selection, so refresh it
         // whenever the list content changes.
         let query = self.input.read(cx).value().to_string();
@@ -1141,12 +1145,25 @@ impl HistoryPanel {
                 })),
             )
             .child(
-                row("footer-clear-all", "全部清除", "⇧⌥⌘Del").on_click(cx.listener(
-                    |this, _, _, cx| {
-                        let _ = this.history.clear_all();
-                        this.reload(cx);
+                row(
+                    "footer-clear-all",
+                    if self.confirm_clear_all {
+                        "再点一次确认"
+                    } else {
+                        "全部清除"
                     },
-                )),
+                    "⇧⌥⌘Del",
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    if !clear_all_armed(&mut this.confirm_clear_all) {
+                        // Arming only lasts while the panel stays as it is; anything
+                        // that reloads it disarms again.
+                        cx.notify();
+                        return;
+                    }
+                    let _ = this.history.clear_all();
+                    this.reload(cx);
+                })),
             )
             .child(
                 row("footer-preferences", "偏好设置…", "⌘,").on_click(cx.listener(
@@ -1158,8 +1175,7 @@ impl HistoryPanel {
             )
             .child(
                 row("footer-about", "关于", "").on_click(cx.listener(|_, _, _, _cx| {
-                    #[cfg(target_os = "macos")]
-                    icons::show_about_panel();
+                    show_about();
                 })),
             )
             .child(row("footer-quit", "退出", "⌘Q").on_click(cx.listener(|_, _, _, cx| cx.quit())))
@@ -1282,13 +1298,19 @@ impl Render for HistoryPanel {
                     // ⌃Space toggles the preview (`KeyboardShortcuts_togglePreview`).
                     this.toggle_preview(cx);
                 } else if key == "backspace" && modifiers.platform && modifiers.alt {
-                    // ⌥⌘⌫ clears unpinned, ⇧⌥⌘⌫ clears everything.
+                    // ⌥⌘⌫ clears unpinned, ⇧⌥⌘⌫ clears everything — and the latter
+                    // asks once, exactly like the footer item does.
                     if modifiers.shift {
-                        let _ = this.history.clear_all();
+                        if clear_all_armed(&mut this.confirm_clear_all) {
+                            let _ = this.history.clear_all();
+                            this.reload(cx);
+                        } else {
+                            cx.notify();
+                        }
                     } else {
                         let _ = this.history.clear_unpinned();
+                        this.reload(cx);
                     }
-                    this.reload(cx);
                 } else if modifiers.platform && key == "," {
                     open_settings(cx);
                 } else if modifiers.platform && key == "q" {
@@ -1379,6 +1401,27 @@ impl Render for HistoryPanel {
 }
 
 /// Maps the `searchMode` setting onto the core's search mode.
+/// Two-step confirmation for the one action that destroys everything: the first
+/// click arms it, the second clears. Returns whether this click should clear.
+fn clear_all_armed(armed: &mut bool) -> bool {
+    let was_armed = *armed;
+    *armed = !was_armed;
+    was_armed
+}
+
+/// Shows what the app is: macOS has a standard about panel, Linux gets the project
+/// page, which is more useful than a menu item that does nothing.
+fn show_about() {
+    #[cfg(target_os = "macos")]
+    icons::show_about_panel();
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = std::process::Command::new("xdg-open")
+            .arg("https://github.com/kaigedong/Manis-Pocket")
+            .spawn();
+    }
+}
+
 fn search_mode(value: &str) -> SearchMode {
     match value {
         "fuzzy" => SearchMode::Fuzzy,
@@ -1430,4 +1473,26 @@ pub(crate) fn copy_entry_to_clipboard(history: &HistoryManager, id: &str) -> boo
     arboard::Clipboard::new()
         .and_then(|mut clipboard| clipboard.set_text(text))
         .is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clear_all_armed;
+
+    #[test]
+    fn clearing_everything_needs_two_clicks() {
+        let mut armed = false;
+        assert!(!clear_all_armed(&mut armed), "the first click only arms");
+        assert!(armed);
+        assert!(clear_all_armed(&mut armed), "the second click clears");
+        assert!(!armed, "and the confirmation is spent");
+    }
+
+    #[test]
+    fn a_spent_confirmation_arms_again() {
+        let mut armed = false;
+        let _ = clear_all_armed(&mut armed);
+        let _ = clear_all_armed(&mut armed);
+        assert!(!clear_all_armed(&mut armed), "a third click must not clear");
+    }
 }

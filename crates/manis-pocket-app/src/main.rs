@@ -409,7 +409,7 @@ impl ListDelegate for HistoryList {
                         }
                     },
                 ))
-                .on_click(move |event, window, cx| {
+                .on_click(move |event, window, _cx| {
                     // ⌘-click builds a paste stack instead of copying at once.
                     let command = matches!(
                         event,
@@ -443,20 +443,15 @@ impl ListDelegate for HistoryList {
         cx: &mut Context<ListState<Self>>,
     ) {
         self.selected = ix;
-        // Decoding belongs here, not in `render`: doing it while painting kept
-        // the window from ever appearing. It also has to wait: this runs inside
-        // the list's own update, and the panel's loader reads the list, which
-        // aborts with "cannot read ListState while it is already being updated".
+        // This runs inside the list's own update, so the panel is only told later:
+        // a spawned task runs between frames, unlike `defer`, which still runs
+        // while the list is on the update stack.
+        let id = ix.and_then(|ix| self.item_at(ix).map(|item| item.id.clone()));
         if let Some(panel) = self.panel.as_ref().and_then(|panel| panel.upgrade()) {
-            // `defer` runs at the end of the current effect cycle, where the list
-            // is still on the update stack and reading it aborts. The next frame
-            // is genuinely outside it.
-            cx.on_next_frame(_window, move |_state, _window, cx| {
-                let _ = panel.update(cx, |panel, cx| {
-                    panel.load_preview_image(cx);
-                    cx.notify();
-                });
-            });
+            cx.spawn(async move |_state, cx| {
+                let _ = panel.update(cx, |panel, cx| panel.select_entry(id, cx));
+            })
+            .detach();
         }
     }
 
@@ -567,6 +562,11 @@ struct HistoryPanel {
     checked: Vec<String>,
     /// Decoded preview images, keyed by entry id: decoding a PNG on every frame
     /// would make the panel stutter on large screenshots.
+    /// How many rows the list is showing, mirrored so the render never has to
+    /// read the list entity.
+    visible_count: usize,
+    /// The highlighted entry by id, for the same reason.
+    selected_id: Option<String>,
     preview_images: std::collections::HashMap<
         String,
         Option<(std::sync::Arc<gpui_kit::RenderImage>, f32, f32)>,
@@ -683,6 +683,8 @@ impl HistoryPanel {
                         .collect()
                 })
                 .unwrap_or_default(),
+            visible_count: 0,
+            selected_id: None,
             preview_images: std::collections::HashMap::new(),
         }
     }
@@ -705,28 +707,52 @@ impl HistoryPanel {
         }
     }
 
-    /// The entry the list currently has selected.
-    fn selected_item(&self, cx: &App) -> Option<ClipboardItem> {
-        let list = self.list.read(cx);
-        let delegate = list.delegate();
-        delegate.item_at(delegate.selected?).cloned()
+    /// Records the highlighted entry and warms its preview.
+    pub fn select_entry(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+        if self.selected_id == id {
+            return;
+        }
+        self.selected_id = id;
+        self.load_preview_image(cx);
+        cx.notify();
+    }
+
+    /// The highlighted entry, resolved from the panel's own copy of the history.
+    fn selected_item(&self) -> Option<ClipboardItem> {
+        let id = self.selected_id.as_deref()?;
+        self.all_items.iter().find(|item| item.id == id).cloned()
     }
 
     /// Moves the highlighted row and keeps it in view.
     fn move_selection(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        // Read outside the update so the panel's own state can move with it.
+        let (count, current, ids) = {
+            let state = self.list.read(cx);
+            let delegate = state.delegate();
+            (
+                delegate.items.len(),
+                state.selected_index().map(|ix| ix.row),
+                delegate
+                    .items
+                    .iter()
+                    .map(|item| item.id.clone())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        if count == 0 {
+            return;
+        }
+        let last = count as isize - 1;
+        let next = match current {
+            Some(row) => (row as isize).saturating_add(delta).clamp(0, last),
+            // No selection yet: down starts at the top, up at the bottom.
+            None if delta > 0 => 0,
+            None => last,
+        };
+        self.selected_id = ids.get(next as usize).cloned();
+        self.load_preview_image(cx);
         let list = self.list.clone();
         let _ = list.update(cx, |state, cx| {
-            let count = state.delegate().items.len();
-            if count == 0 {
-                return;
-            }
-            let last = count as isize - 1;
-            let next = match state.selected_index() {
-                Some(ix) => (ix.row as isize).saturating_add(delta).clamp(0, last),
-                // No selection yet: down starts at the top, up at the bottom.
-                None if delta > 0 => 0,
-                None => last,
-            };
             state.set_selected_index(
                 Some(gpui_kit::base::IndexPath {
                     section: 0,
@@ -738,6 +764,7 @@ impl HistoryPanel {
             );
             state.scroll_to_selected_item(window, cx);
         });
+        cx.notify();
     }
 
     /// Copies what the user is pointing at: the highlighted row, or the first one.
@@ -751,7 +778,7 @@ impl HistoryPanel {
     /// Pins or unpins the selected entry. Pins take the next free letter, which
     /// is what the row shows on its right.
     fn toggle_pin_selected(&mut self, cx: &mut Context<Self>) {
-        let Some(item) = self.selected_item(cx) else {
+        let Some(item) = self.selected_item() else {
             return;
         };
         let used: Vec<String> = self
@@ -766,7 +793,7 @@ impl HistoryPanel {
 
     /// Deletes the selected entry and tells paired devices, like the macOS build.
     fn delete_selected(&mut self, cx: &mut Context<Self>) {
-        let Some(item) = self.selected_item(cx) else {
+        let Some(item) = self.selected_item() else {
             return;
         };
         if self.history.delete(item.id.clone()).is_ok() {
@@ -849,6 +876,10 @@ impl HistoryPanel {
 
         let pins_position = self.settings.pins_position.clone();
         let sort_by = self.settings.sort_by.clone();
+        // Keep the panel's own view of the list: the render and the selection
+        // resolve against these instead of reading the list entity.
+        self.visible_count = items.len();
+        self.selected_id = items.first().map(|item| item.id.clone());
         self.list.update(cx, |state, cx| {
             let delegate = state.delegate_mut();
             delegate.highlights = highlights;
@@ -866,8 +897,8 @@ impl HistoryPanel {
 impl HistoryPanel {
     /// The right-hand preview sidebar: full text plus where it came from.
     /// The selected entry's picture, if it has one.
-    fn preview_image(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let item = self.selected_item(cx)?;
+    fn preview_image(&self, _cx: &mut Context<Self>) -> Option<AnyElement> {
+        let item = self.selected_item()?;
         if !matches!(rows::row_kind(&item), rows::RowKind::Image) {
             return None;
         }
@@ -908,31 +939,25 @@ impl HistoryPanel {
     /// Warms the app-icon cache off the paint path: a paint that asks AppKit for
     /// an icon re-enters the list and aborts.
     fn load_app_icons(&mut self, cx: &mut Context<Self>) {
-        let apps: Vec<String> = {
-            let delegate = self.list.read(cx).delegate();
-            delegate
-                .items
-                .iter()
-                .filter_map(|item| item.application.clone())
-                .filter(|app| !app.is_empty())
-                .collect()
-        };
+        let apps: Vec<String> = self
+            .all_items
+            .iter()
+            .filter_map(|item| item.application.clone())
+            .filter(|app| !app.is_empty())
+            .collect();
         icons::preload(apps.iter().map(String::as_str));
         cx.notify();
     }
 
     /// Decodes row thumbnails for image entries, off the paint path.
     fn load_row_images(&mut self, cx: &mut Context<Self>) {
-        let ids: Vec<String> = {
-            let delegate = self.list.read(cx).delegate();
-            delegate
-                .items
-                .iter()
-                .filter(|item| matches!(rows::row_kind(item), rows::RowKind::Image))
-                .map(|item| item.id.clone())
-                .take(60)
-                .collect()
-        };
+        let ids: Vec<String> = self
+            .all_items
+            .iter()
+            .filter(|item| matches!(rows::row_kind(item), rows::RowKind::Image))
+            .map(|item| item.id.clone())
+            .take(60)
+            .collect();
         let mut loaded_any = false;
         for id in ids {
             if icons::has_thumb(&id) {
@@ -957,18 +982,11 @@ impl HistoryPanel {
         }
     }
 
-    fn load_preview_image(&mut self, cx: &mut Context<Self>) {
-        let Some(item) = self.selected_item(cx).or_else(|| {
-            self.list
-                .read(cx)
-                .delegate()
-                .item_at(gpui_kit::base::IndexPath {
-                    section: 0,
-                    row: 0,
-                    column: 0,
-                })
-                .cloned()
-        }) else {
+    fn load_preview_image(&mut self, _cx: &mut Context<Self>) {
+        let Some(item) = self
+            .selected_item()
+            .or_else(|| self.all_items.first().cloned())
+        else {
             return;
         };
         if !matches!(rows::row_kind(&item), rows::RowKind::Image) {
@@ -997,7 +1015,7 @@ impl HistoryPanel {
 
     fn render_preview(&self, cx: &mut Context<Self>) -> AnyElement {
         let width = self.settings.preview_width as f32;
-        let selected = self.selected_item(cx);
+        let selected = self.selected_item();
         let now = Utc::now().timestamp_millis();
         let lines = selected
             .as_ref()
@@ -1249,8 +1267,11 @@ impl Render for HistoryPanel {
             window.resize(desired);
         }
 
-        let count = self.list.read(cx).delegate().items.len();
-        let checked = self.list.read(cx).delegate().checked.len();
+        // Reading the list here used to abort: a key press notifies the list,
+        // the panel re-renders, and this render ran while the list was still
+        // being updated. The counts are kept instead.
+        let count = self.visible_count;
+        let checked = self.checked.len();
 
         div()
             .flex()

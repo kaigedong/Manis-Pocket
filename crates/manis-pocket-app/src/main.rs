@@ -362,30 +362,43 @@ impl ListDelegate for HistoryList {
             && self.pinned_count < self.items.len();
         // `selected` also tells the list item it is the active row, which is what
         // keeps the library's hover background from covering our blue.
+        // The list item paints its own selection colour from the theme, which is a
+        // pale blue. The row body carries our accent instead and covers it, so the
+        // highlight is one colour wherever it lands. `selected` is still passed so
+        // the library leaves the active row out of its hover styling.
+        let body = div()
+            .w_full()
+            .rounded(px(ROW_CORNER))
+            .px_3()
+            .py_1()
+            .bg(gpui::rgb(SELECTION_ACCENT).opacity(if selected { 0.8 } else { 0.0 }))
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .child(row)
+                    .child(trailing),
+            );
+
         let item_element = if ends_pinned_block {
             ListItem::new(("row", ix.row))
                 .selected(selected)
                 .w_full()
-                .rounded(px(ROW_CORNER))
+                .px(px(0.0))
+                .py(px(0.0))
                 .border_b_1()
                 .border_color(gpui::rgb(0x0A84FF).opacity(0.25))
         } else {
             ListItem::new(("row", ix.row))
                 .selected(selected)
                 .w_full()
-                .rounded(px(ROW_CORNER))
+                .px(px(0.0))
+                .py(px(0.0))
         };
 
         Some(
             item_element
-                .bg(gpui::rgb(SELECTION_ACCENT).opacity(if selected { 0.8 } else { 0.0 }))
-                .child(
-                    h_flex()
-                        .w_full()
-                        .justify_between()
-                        .child(row)
-                        .child(trailing),
-                )
+                .child(body)
                 .on_hover(cx.listener(
                     move |state: &mut ListState<HistoryList>,
                           hovered: &bool,

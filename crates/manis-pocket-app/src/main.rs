@@ -739,12 +739,15 @@ impl HistoryPanel {
     /// Moves the highlighted row and keeps it in view.
     fn move_selection(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
         // Read outside the update so the panel's own state can move with it.
+        // The delegate owns the highlighted row: `refresh` sets it directly, so
+        // ListState::selected_index() stays None and using it made the first
+        // press re-select the row that was already highlighted.
         let (count, current, ids) = {
             let state = self.list.read(cx);
             let delegate = state.delegate();
             (
                 delegate.items.len(),
-                state.selected_index().map(|ix| ix.row),
+                delegate.selected.map(|ix| ix.row),
                 delegate
                     .items
                     .iter()
@@ -755,12 +758,8 @@ impl HistoryPanel {
         if count == 0 {
             return;
         }
-        let last = count as isize - 1;
-        let next = match current {
-            Some(row) => (row as isize).saturating_add(delta).clamp(0, last),
-            // No selection yet: down starts at the top, up at the bottom.
-            None if delta > 0 => 0,
-            None => last,
+        let Some(next) = rows::next_row(current, delta, count) else {
+            return;
         };
         self.selected_id = ids.get(next as usize).cloned();
         self.load_preview_image(cx);

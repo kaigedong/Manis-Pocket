@@ -708,3 +708,52 @@ mod tests {
         assert_eq!(row_meta(&text, 1_000_000), "Terminal  刚刚");
     }
 }
+
+/// The row a navigation key lands on. Both ends wrap, so up from the first row
+/// goes to the last one.
+pub fn next_row(current: Option<usize>, delta: isize, count: usize) -> Option<usize> {
+    if count == 0 {
+        return None;
+    }
+    match current {
+        Some(row) => Some((row as isize + delta).rem_euclid(count as isize) as usize),
+        None if delta > 0 => Some(0),
+        None => Some(count - 1),
+    }
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::next_row;
+
+    #[test]
+    fn one_step_moves_one_row() {
+        assert_eq!(next_row(Some(0), 1, 10), Some(1));
+        assert_eq!(next_row(Some(5), 1, 10), Some(6));
+        assert_eq!(next_row(Some(5), -1, 10), Some(4));
+    }
+
+    #[test]
+    fn both_ends_wrap() {
+        assert_eq!(next_row(Some(0), -1, 10), Some(9));
+        assert_eq!(next_row(Some(9), 1, 10), Some(0));
+    }
+
+    #[test]
+    fn without_a_selection_the_direction_decides() {
+        assert_eq!(next_row(None, 1, 10), Some(0));
+        assert_eq!(next_row(None, -1, 10), Some(9));
+    }
+
+    #[test]
+    fn an_empty_list_has_no_row() {
+        assert_eq!(next_row(Some(0), 1, 0), None);
+        assert_eq!(next_row(None, 1, 0), None);
+    }
+
+    #[test]
+    fn page_size_steps_stay_inside_the_list() {
+        assert_eq!(next_row(Some(0), -8, 10), Some(2));
+        assert_eq!(next_row(Some(8), 8, 10), Some(6));
+    }
+}

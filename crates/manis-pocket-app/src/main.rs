@@ -340,19 +340,6 @@ impl ListDelegate for HistoryList {
                 .text_color(gpui::white())
                 .child(SharedString::from(format!("{order}")))
                 .into_any_element()
-        } else if item.pin.is_some() {
-            // A pinned row is marked with a dot; the shortcut hints are gone, so
-            // the letter itself would only be noise.
-            div()
-                .flex_shrink_0()
-                .size(px(6.0))
-                .rounded_full()
-                .bg(if selected {
-                    gpui::rgba(0xFFFF_FFD9)
-                } else {
-                    gpui::rgb(SELECTION_ACCENT).opacity(0.75)
-                })
-                .into_any_element()
         } else {
             div().flex_shrink_0().into_any_element()
         };
@@ -368,10 +355,25 @@ impl ListDelegate for HistoryList {
             .child(trailing_inner)
             .into_any_element();
 
-        Some(
+        // The pinned entries are sorted to the top; a rule under the last one
+        // separates them from the history without labelling anything.
+        let ends_pinned_block = self.pinned_count > 0
+            && ix.row + 1 == self.pinned_count
+            && self.pinned_count < self.items.len();
+        let item_element = if ends_pinned_block {
             ListItem::new(("row", ix.row))
                 .w_full()
                 .rounded(px(ROW_CORNER))
+                .border_b_1()
+                .border_color(gpui::rgb(0x0A84FF).opacity(0.25))
+        } else {
+            ListItem::new(("row", ix.row))
+                .w_full()
+                .rounded(px(ROW_CORNER))
+        };
+
+        Some(
+            item_element
                 .bg(gpui::rgb(SELECTION_ACCENT).opacity(if selected { 0.8 } else { 0.0 }))
                 .child(
                     h_flex()

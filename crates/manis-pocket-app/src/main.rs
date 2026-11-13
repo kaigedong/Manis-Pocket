@@ -1595,7 +1595,7 @@ fn exit_after(delivered: bool) {
 fn open_settings(cx: &mut App) {
     let bounds = Bounds::centered(None, size(px(720.0), px(520.0)), cx);
     let database = storage_path();
-    gpui_kit::open_window(
+    let opened = gpui_kit::open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions {
@@ -1611,8 +1611,10 @@ fn open_settings(cx: &mut App) {
             let history = history();
             cx.new(|cx| settings_ui::SettingsView::new(database, history, window, cx))
         },
-    )
-    .expect("open settings window");
+    );
+    if let Err(error) = opened {
+        eprintln!("could not open the settings window: {error}");
+    }
 }
 
 /// Opens the history panel. Called at launch and by the global shortcut.
@@ -1659,7 +1661,7 @@ fn open_panel_at(cx: &mut App, anchor: Option<tray::TrayAnchor>) {
         );
     }
     let bounds = panel_bounds(cx, panel, &settings, anchor);
-    let (handle, _) = gpui_kit::open_window(
+    let opened = gpui_kit::open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             // `Floating`, not `PopUp`: gpui-macos implements `PopUp` as a
@@ -1703,8 +1705,13 @@ fn open_panel_at(cx: &mut App, anchor: Option<tray::TrayAnchor>) {
             });
             panel
         },
-    )
-    .expect("open history panel");
+    );
+    // A window that could not be created leaves the app usable: the next click on
+    // the status item tries again instead of the process aborting.
+    let Ok((handle, _)) = opened else {
+        eprintln!("could not open the history panel");
+        return;
+    };
     // Remember which window is the panel, so a second click can find it and a
     // closed one is not mistaken for an open one.
     set_panel_window(Some(handle.window_id()));

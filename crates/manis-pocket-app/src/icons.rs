@@ -190,6 +190,7 @@ pub fn frontmost_bundle_id() -> Option<String> {
 
 /// The texture size an app icon decodes to. Rows draw them at `ICON_SIZE`; 64
 /// covers a 2x display without keeping the 1024 px artwork in memory.
+#[cfg(target_os = "macos")]
 const ICON_TEXTURE_SIZE: u32 = 64;
 
 #[cfg(target_os = "macos")]

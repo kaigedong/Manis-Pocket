@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 
 use crate::error::ErrorCode;
 use crate::register::{self, ClipboardRegister, ClipboardUpdate, ClipboardValue, MergeResult};
-use crate::state::{SharedState, SyncCommand};
+use crate::state::{SharedState, SyncCommand, SyncState};
 use crate::types::{
     ApplyStatus, CLIPBOARD_PROTOCOL, ClipboardRequest, ClipboardResponse, FILE_TRANSFER_PROTOCOL,
     FileChunk, FileRequest, LISTEN_PORT, PAIRING_PROTOCOL, PairingMessage, PeerInfo, SyncEvent,
@@ -195,7 +195,7 @@ impl NetworkManager {
             libp2p::identify::Config::new(PAIRING_PROTOCOL.to_string(), local_key.public())
                 .with_agent_version(format!(
                     "manis-pocket-sync/0.1.0/{}",
-                    state.lock().unwrap().device_name,
+                    lock_state(&state).device_name,
                 )),
         );
 
@@ -302,9 +302,12 @@ impl NetworkManager {
             log::error!("Failed to subscribe to pairing topic: {e:?}");
         }
 
-        let listen_addr: libp2p::Multiaddr = format!("/ip4/0.0.0.0/tcp/{}", self.listen_port)
-            .parse()
-            .unwrap();
+        let Ok(listen_addr) =
+            format!("/ip4/0.0.0.0/tcp/{}", self.listen_port).parse::<libp2p::Multiaddr>()
+        else {
+            self.emit_error(ErrorCode::InvalidArg, "Invalid listen port".into());
+            return;
+        };
         if self.swarm.listen_on(listen_addr).is_err() {
             self.emit_error(ErrorCode::Network, "Failed to listen on port".into());
             return;
@@ -329,12 +332,12 @@ impl NetworkManager {
     }
 
     fn state_emit(&self, event: &SyncEvent) {
-        let state = self.state.lock().unwrap();
+        let state = lock_state(&self.state);
         state.emit(event);
     }
 
     fn emit_error(&self, code: ErrorCode, msg: String) {
-        let state = self.state.lock().unwrap();
+        let state = lock_state(&self.state);
         state.emit_error(code, msg);
     }
 
@@ -857,7 +860,7 @@ impl NetworkManager {
                         return;
                     }
                     let device_name = {
-                        let state = self.state.lock().unwrap();
+                        let state = lock_state(&self.state);
                         state.device_name.clone()
                     };
                     let session_id = uuid::Uuid::new_v4().to_string();
@@ -1202,6 +1205,15 @@ fn listen_port() -> u16 {
         .unwrap_or(LISTEN_PORT)
 }
 
+/// The shared state, even if a previous holder panicked while holding the lock. The
+/// contents are plain data, so a poisoned lock is still usable and taking the app
+/// down over it would lose the sync session.
+fn lock_state(state: &SharedState) -> std::sync::MutexGuard<'_, SyncState> {
+    state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn pairing_pin(session_id: &str, local: &PeerId, remote: &PeerId) -> String {
     let mut peers = [local.to_string(), remote.to_string()];
     peers.sort();
@@ -1210,8 +1222,10 @@ fn pairing_pin(session_id: &str, local: &PeerId, remote: &PeerId) -> String {
     hash.update(session_id.as_bytes());
     hash.update(peers[0].as_bytes());
     hash.update(peers[1].as_bytes());
-    let bytes = hash.finalize();
-    let value = u32::from_be_bytes(bytes[..4].try_into().unwrap()) % 1_000_000;
+    let digest = hash.finalize();
+    let mut bytes = [0u8; 4];
+    bytes.copy_from_slice(&digest[..4]);
+    let value = u32::from_be_bytes(bytes) % 1_000_000;
     format!("{value:06}")
 }
 

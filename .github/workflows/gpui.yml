@@ -27,8 +27,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  macos:
-    name: macOS app bundle
+  test:
+    name: Test
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -36,45 +36,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Test
-        run: |
+      - run: |
           cargo test -p manis-pocket-app
           cargo test -p manis-pocket-core
           cargo test -p manis-pocket-sync --lib
-
-      - name: Build and package
-        env:
-          PROFILE: release
-          # Empty secrets fall back to an ad-hoc signature, which still runs
-          # locally but is not distributable.
-          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY || '-' }}
-          VERSION: ${{ github.run_number }}
-        run: |
-          if [ -n "${{ secrets.MACOS_CERTIFICATE_P12 }}" ]; then
-            echo "${{ secrets.MACOS_CERTIFICATE_P12 }}" | base64 -d > /tmp/cert.p12
-            security create-keychain -p build build.keychain
-            security default-keychain -s build.keychain
-            security unlock-keychain -p build build.keychain
-            security import /tmp/cert.p12 -k build.keychain -P "${{ secrets.MACOS_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
-            security set-key-partition-list -S apple-tool:,apple: -s -k build build.keychain
-          fi
-          if [ -n "${{ secrets.MACOS_NOTARY_APPLE_ID }}" ]; then
-            xcrun notarytool store-credentials build-notary \
-              --apple-id "${{ secrets.MACOS_NOTARY_APPLE_ID }}" \
-              --password "${{ secrets.MACOS_NOTARY_PASSWORD }}" \
-              --team-id "${{ secrets.MACOS_TEAM_ID }}"
-            export NOTARY_PROFILE=build-notary
-          fi
-          bash scripts/bundle-macos.sh
-
-      - name: Zip
-        run: ditto -c -k --sequesterRsrc --keepParent "build/Manis Pocket.app" build/ManisPocket-gpui-macos.zip
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ManisPocket-gpui-macOS
-          path: build/ManisPocket-gpui-macos.zip
-          if-no-files-found: error
 
   linux:
     name: Linux binary
@@ -118,14 +83,11 @@ jobs:
   publish:
     name: Attach to release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [macos, linux]
+    needs: [linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: ManisPocket-gpui-macOS
       - uses: actions/download-artifact@v4
         with:
           name: ManisPocket-gpui-linux
@@ -153,6 +115,5 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           gh release upload "$TAG" \
-            ManisPocket-gpui-macos.zip \
             ManisPocket-gpui-linux-x86_64.tar.gz \
             --repo "$GITHUB_REPOSITORY" --clobber

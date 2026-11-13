@@ -18,6 +18,8 @@ BUNDLE_ID="${BUNDLE_ID:-com.kaigedong.manispocket}"
 # identity also needs the hardened runtime, otherwise the app cannot be notarized.
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 VERSION="${VERSION:-2.7.127}"
+# Sparkle compares CFBundleVersion, so it has to keep increasing across releases.
+BUILD_NUMBER="${BUILD_NUMBER:-$VERSION}"
 APP_NAME="Manis Pocket"
 OUT="$REPO/build/$APP_NAME.app"
 
@@ -36,7 +38,7 @@ mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
 cp "$BINARY" "$OUT/Contents/MacOS/manis-pocket"
 
 # Icon: grow an .icns from the existing 1024pt asset so Finder/Dock have one.
-SOURCE_ICON="$REPO/ManisPocket/Assets.xcassets/AppIcon.appiconset/AppIcon (Big Sur)-1024w.png"
+SOURCE_ICON="$REPO/crates/manis-pocket-app/assets/app-icon.png"
 if [ -f "$SOURCE_ICON" ]; then
   ICONSET="$(mktemp -d)/AppIcon.iconset"
   mkdir -p "$ICONSET"
@@ -62,7 +64,7 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$BUILD_NUMBER</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <!-- Menu-bar app: no Dock icon, like the SwiftUI build. -->
   <key>LSUIElement</key><true/>

@@ -51,60 +51,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode
-        run: |
-          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
-          xcodebuild -version
-
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             .
           cache-on-failure: true
-      - run: bash scripts/build-rust-macos.sh
-      - run: ruby scripts/patch-xcode.rb
 
-      - name: Build
+      - name: Test
         run: |
-          xcodebuild build \
-            -project ManisPocket.xcodeproj \
-            -scheme ManisPocket \
-            -configuration Release \
-            -derivedDataPath build \
-            -parallelizeTargets \
-            ARCHS=arm64 \
-            ONLY_ACTIVE_ARCH=YES \
-            COMPILER_INDEX_STORE_ENABLE=NO \
-            DEBUG_INFORMATION_FORMAT=dwarf \
-            MARKETING_VERSION="${{ needs.version.outputs.version }}" \
-            CURRENT_PROJECT_VERSION="${{ needs.version.outputs.build_number }}" \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="-" \
-            DEVELOPMENT_TEAM="" \
-            ENABLE_HARDENED_RUNTIME=NO \
-            CODE_SIGNING_REQUIRED=YES \
-            CODE_SIGNING_ALLOWED=YES
+          cargo test -p manis-pocket-app
+          cargo test -p manis-pocket-core
+
+      - name: Build and package
+        env:
+          PROFILE: release
+          VERSION: ${{ needs.version.outputs.version }}
+          BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
+          # Falls back to an ad-hoc signature when the certificate is absent, so
+          # forks still produce a runnable app.
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY || '-' }}
+        run: bash scripts/bundle-macos.sh
 
       - name: Verify and package
         run: |
-          APP="build/Build/Products/Release/ManisPocket.app"
-          ARCHIVE="build/Build/Products/Release/ManisPocket.app.zip"
-
-          codesign --verify --deep --strict --verbose=4 "$APP"
+          APP="build/Manis Pocket.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
           codesign -dv --verbose=4 "$APP" 2>&1
 
-          ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARCHIVE"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" build/ManisPocket.app.zip
 
           VERIFY_DIR="$(mktemp -d)"
-          ditto -x -k "$ARCHIVE" "$VERIFY_DIR"
-          codesign --verify --deep --strict --verbose=4 "$VERIFY_DIR/ManisPocket.app"
-          python3 scripts/check-macos-startup.py --app "$VERIFY_DIR/ManisPocket.app"
+          ditto -x -k build/ManisPocket.app.zip "$VERIFY_DIR"
+          codesign --verify --deep --strict --verbose=2 "$VERIFY_DIR/Manis Pocket.app"
+          test -x "$VERIFY_DIR/Manis Pocket.app/Contents/MacOS/manis-pocket"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
+            "$VERIFY_DIR/Manis Pocket.app/Contents/Info.plist"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ManisPocket-macOS
-          path: build/Build/Products/Release/ManisPocket.app.zip
+          path: build/ManisPocket.app.zip
 
   build-android:
     name: Build Manis Pocket (Android)

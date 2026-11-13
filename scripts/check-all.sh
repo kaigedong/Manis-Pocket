@@ -1,24 +1,23 @@
 #!/usr/bin/env bash
+# Everything CI verifies, runnable on one machine.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "=== Format check ==="
 cargo fmt --check && echo "✅ Rust fmt"
-swiftformat --lint ManisPocket/ ManisPocketTests/ ManisPocketUITests/ 2>&1 | tail -1
 ./ktlint 'android/**/*.kt' '!android/**/manis_pocket_core.kt' 2>&1 | tail -1
+python3 -m unittest discover -s scripts/tests 2>&1 | tail -3
 echo ""
 
 echo "=== Rust ==="
 cargo check
 cargo test -p manis-pocket-core
-cargo build --release -p manis-pocket-core
+cargo test -p manis-pocket-sync
+cargo test -p manis-pocket-app
 echo ""
 
-echo "=== macOS ==="
-cp ~/.cargo/target/release/libmanis_pocket_core.a ~/.cargo/target/release/libmanis_pocket_core.dylib ~/.cargo/target/release/libmanis_pocket_sync.a target/release/ 2>/dev/null || true
-cargo run --release --bin uniffi-bindgen --package manis-pocket-core generate --library ~/.cargo/target/release/libmanis_pocket_core.dylib --language swift --out-dir ManisPocket/Generated
-cp ManisPocket/Generated/ManisPocketCore.swift ManisPocket/ManisPocketCore.swift
-xcodebuild build -project ManisPocket.xcodeproj -scheme ManisPocket -configuration Release -derivedDataPath build ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+echo "=== macOS bundle ==="
+PROFILE=release bash scripts/bundle-macos.sh
 echo ""
 
 echo "=== Android ==="

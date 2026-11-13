@@ -1,7 +1,4 @@
-# ── Xcode ─────────────────────────────────────────────────────────
-xcuserdata/
-ManisPocket.xcodeproj/project.xcworkspace/xcshareddata
-ManisPocket/build/
+# ── build output ──────────────────────────────────────────────────
 build/
 
 # ── Rust ──────────────────────────────────────────────────────────

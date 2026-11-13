@@ -738,42 +738,6 @@ fn start_clipboard_capture(cx: &mut App, history: Arc<HistoryManager>, settings:
     .detach();
 }
 
-/// A small icon button for the row's trailing actions.
-fn action_icon_button(
-    id: SharedString,
-    icon: gpui_kit::assets::IconName,
-    on_accent: bool,
-    handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-) -> AnyElement {
-    let tint = if on_accent {
-        gpui::white().opacity(0.9)
-    } else {
-        gpui::black().opacity(0.55)
-    };
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .justify_center()
-        .size(px(18.0))
-        .rounded(px(3.0))
-        .cursor_pointer()
-        .hover(move |style| {
-            style.bg(if on_accent {
-                gpui::white().opacity(0.18)
-            } else {
-                gpui::black().opacity(0.08)
-            })
-        })
-        .child(
-            gpui_kit::component::Icon::new(icon)
-                .xsmall()
-                .text_color(tint),
-        )
-        .on_click(handler)
-        .into_any_element()
-}
-
 #[cfg(test)]
 mod import_tests {
     // `super::*` would bring in gpui's own `test` attribute and shadow the built-in

@@ -861,6 +861,52 @@ mod tests {
     }
 
     #[test]
+    fn a_database_from_the_old_v2_migration_gains_the_admin_column() {
+        let directory = std::env::temp_dir().join(format!("manis-v2-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("temp dir");
+        let path = directory.join("old.sqlite");
+
+        // What the buggy v2 wrote: sync_pairs without is_admin, and a version row
+        // that says the migration already ran.
+        {
+            let connection = rusqlite::Connection::open(&path).expect("create");
+            connection
+                .execute_batch(
+                    "CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
+                     INSERT INTO schema_version VALUES (1), (2);
+                     CREATE TABLE history_items (
+                        id TEXT PRIMARY KEY, application TEXT,
+                        first_copied_at INTEGER NOT NULL, last_copied_at INTEGER NOT NULL,
+                        number_of_copies INTEGER NOT NULL DEFAULT 1, pin TEXT,
+                        title TEXT NOT NULL DEFAULT '', sync_timestamp INTEGER NOT NULL,
+                        sync_source TEXT, sync_deleted INTEGER NOT NULL DEFAULT 0);
+                     CREATE TABLE history_contents (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, item_id TEXT NOT NULL,
+                        content_type TEXT NOT NULL, value BLOB);
+                     CREATE TABLE sync_pairs (
+                        peer_id TEXT PRIMARY KEY, display_name TEXT NOT NULL);",
+                )
+                .expect("seed");
+        }
+
+        let storage = Storage::open(path.to_string_lossy().as_ref()).expect("migrate");
+        storage
+            .save_paired_peer("peer-1", "Pixel", true)
+            .expect("write a peer after the migration");
+        let peers = storage.get_paired_peers().expect("read");
+        assert_eq!(
+            peers,
+            vec![("peer-1".to_string(), "Pixel".to_string(), true)]
+        );
+
+        drop(storage);
+        // Opening an already-migrated database must be a no-op, not an error.
+        Storage::open(path.to_string_lossy().as_ref()).expect("reopen");
+
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
     fn legacy_pairs_require_fresh_confirmation() {
         let storage = Storage::open_in_memory().unwrap();
         storage

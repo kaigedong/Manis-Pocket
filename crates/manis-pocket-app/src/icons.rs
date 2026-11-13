@@ -4,8 +4,9 @@
 //! app bundle and is only reachable through AppKit. It is fetched once per bundle
 //! and cached, because the list renders thousands of rows.
 //!
-//! Linux has no equivalent (icons come from the desktop's icon theme and need the
-//! `.desktop` entry), so there the row keeps the letter badge.
+//! Linux resolves them from the desktop icon theme through the window class
+//! (`apps_linux`), which is a different lookup but the same cache: both platforms
+//! fill it before painting and only read it while painting.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,28 +14,22 @@ use std::sync::{Mutex, OnceLock};
 
 use gpui_kit::RenderImage;
 
-#[cfg(target_os = "macos")]
-fn cache() -> &'static Mutex<HashMap<String, Option<Arc<RenderImage>>>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, Option<Arc<RenderImage>>>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+type IconCache = HashMap<String, Option<Arc<RenderImage>>>;
+static ICONS: OnceLock<Mutex<IconCache>> = OnceLock::new();
+
+fn cache() -> &'static Mutex<IconCache> {
+    ICONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// The icon if it has already been loaded. Safe to call while painting: asking
 /// AppKit for an icon at that point spins a nested runloop, re-enters the list
 /// and aborts with "cannot read ListState while it is already being updated".
-#[cfg(target_os = "macos")]
 pub fn cached_icon(bundle_id: &str) -> Option<Arc<RenderImage>> {
     cache().lock().ok()?.get(bundle_id).cloned().flatten()
 }
 
-#[cfg(not(target_os = "macos"))]
-pub fn cached_icon(_bundle_id: &str) -> Option<Arc<RenderImage>> {
-    None
-}
-
 /// Loads the icons for these apps and parks them in the cache, so a later paint
 /// only reads. Must be called outside the render pass.
-#[cfg(target_os = "macos")]
 pub fn preload<'a>(bundle_ids: impl IntoIterator<Item = &'a str>) {
     for bundle_id in bundle_ids {
         let known = cache()
@@ -44,19 +39,21 @@ pub fn preload<'a>(bundle_ids: impl IntoIterator<Item = &'a str>) {
         if known {
             continue;
         }
-        let icon = macos::load(bundle_id);
+        let icon = load(bundle_id);
         if let Ok(mut cache) = cache().lock() {
             cache.insert(bundle_id.to_string(), icon);
         }
     }
 }
 
-#[cfg(not(target_os = "macos"))]
-pub fn preload<'a>(_bundle_ids: impl IntoIterator<Item = &'a str>) {}
+/// The platform's icon lookup: AppKit on macOS, the icon theme on Linux.
+#[cfg(target_os = "macos")]
+fn load(bundle_id: &str) -> Option<Arc<RenderImage>> {
+    macos::load(bundle_id)
+}
 
 #[cfg(not(target_os = "macos"))]
-pub fn icon_for_bundle(bundle_id: &str) -> Option<Arc<RenderImage>> {
-    // On Linux the "bundle id" is the window class from the compositor.
+fn load(bundle_id: &str) -> Option<Arc<RenderImage>> {
     crate::apps_linux::icon_for_app(bundle_id)
 }
 

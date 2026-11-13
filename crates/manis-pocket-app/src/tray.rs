@@ -228,7 +228,8 @@ mod linux {
         }
 
         fn activate(&mut self, _x: i32, _y: i32) {
-            let _ = self.tx.unbounded_send(TrayCommand::Open);
+            // Toggle, like the macOS status item: a second click hides the panel.
+            let _ = self.tx.unbounded_send(TrayCommand::Toggle(None));
         }
 
         fn menu(&self) -> Vec<KsniMenuItem<Self>> {

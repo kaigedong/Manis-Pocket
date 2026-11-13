@@ -1450,8 +1450,14 @@ fn panel_bounds(
     // the panel to the middle of the screen instead. A click carries the icon
     // rectangle, the shortcut and IPC ask the tray for it.
     if settings.popup_position != "center" {
+        let anchor = anchor.or_else(|| {
+            settings.status_item_x.map(|x| tray::TrayAnchor {
+                x: f64::from(x),
+                y: 24.0,
+            })
+        });
         if let Some(anchor) = anchor {
-            let (x, y) = placement::anchored_origin(&screen, panel, anchor, screen_scale());
+            let (x, y) = placement::anchored_origin(&screen, panel, anchor);
             return Bounds::new(clamp(x, y), panel);
         }
         // Straight after launch the status item has no frame yet; the top-right
@@ -1478,23 +1484,6 @@ fn panel_bounds(
     };
     let _ = margin;
     Bounds::new(origin, panel)
-}
-
-/// Backing scale of the main screen, so tray rectangles (physical pixels) can be
-/// turned into the logical points the layout uses.
-#[cfg(target_os = "macos")]
-fn screen_scale() -> f32 {
-    unsafe {
-        let screen = objc2_app_kit::NSScreen::mainScreen(objc2::MainThreadMarker::new_unchecked());
-        screen
-            .map(|screen| screen.backingScaleFactor() as f32)
-            .unwrap_or(2.0)
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn screen_scale() -> f32 {
-    1.0
 }
 
 /// Top-right corner, 10px from the edge and 6px under the menu bar.
@@ -1573,6 +1562,12 @@ fn open_panel_at(cx: &mut App, anchor: Option<tray::TrayAnchor>) {
         px(settings.window_width as f32 + PANEL_MARGIN * 2.0),
         px(settings.window_height as f32 + PANEL_MARGIN * 2.0),
     );
+    // Fill the icon cache before the first frame: loading it from the deferred
+    // step made the chips and row icons appear a beat after the text, which read
+    // as the panel shifting.
+    if let Ok(items) = history().load_metadata() {
+        icons::preload(items.iter().filter_map(|item| item.application.as_deref()));
+    }
     let bounds = panel_bounds(cx, panel, &settings, anchor);
     let (handle, _) = gpui_kit::open_window(
         WindowOptions {
@@ -1878,9 +1873,16 @@ fn main() {
 
                 while let Ok(command) = tray_rx.try_recv() {
                     match command {
-                        tray::TrayCommand::Toggle(anchor) => {
-                            cx.update(|cx| toggle_panel_at(cx, anchor))
-                        }
+                        tray::TrayCommand::Toggle(anchor) => cx.update(|cx| {
+                            if let Some(anchor) = anchor {
+                                let mut settings = settings::Settings::load(&storage_path());
+                                if settings.status_item_x != Some(anchor.x as f32) {
+                                    settings.status_item_x = Some(anchor.x as f32);
+                                    settings.save(&storage_path());
+                                }
+                            }
+                            toggle_panel_at(cx, anchor)
+                        }),
                         tray::TrayCommand::Open => cx.update(open_panel_if_needed),
                         tray::TrayCommand::Settings => cx.update(open_settings),
                         tray::TrayCommand::Quit => cx.update(|cx| cx.quit()),

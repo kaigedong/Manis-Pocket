@@ -31,6 +31,10 @@ pub struct Settings {
     pub search_mode: String,
     pub sort_by: String,
     pub popup_position: String,
+    /// Left edge of the status icon in points, learned from the last click.
+    /// AppKit reports the status item window as a zero-sized placeholder, so
+    /// this is the only way a shortcut-opened panel can line up with the icon.
+    pub status_item_x: Option<f32>,
     /// Whether image copies are stored at all.
     pub save_images: bool,
     /// Whether text copies are stored at all.
@@ -75,6 +79,7 @@ impl Default for Settings {
             // The panel belongs to the status icon; "cursor" was the SwiftUI
             // default and left the panel following the pointer.
             popup_position: "statusItem".into(),
+            status_item_x: None,
             save_images: true,
             save_text: true,
             highlight_match: "bold".into(),
@@ -152,6 +157,9 @@ impl Settings {
         if let Some(value) = get("showFooter") {
             settings.show_footer = truthy(value);
         }
+        if let Some(value) = get("statusItemX") {
+            settings.status_item_x = value.parse::<f32>().ok();
+        }
         if let Some(value) = get("popupPosition") {
             settings.popup_position = value.to_string();
         }
@@ -181,6 +189,9 @@ impl Settings {
         }
         if let Some(value) = get("sortBy") {
             settings.sort_by = value.to_string();
+        }
+        if let Some(value) = get("statusItemX") {
+            settings.status_item_x = value.parse::<f32>().ok();
         }
         if let Some(value) = get("popupPosition") {
             settings.popup_position = value.to_string();
@@ -241,6 +252,7 @@ impl Settings {
             "searchMode",
             "sortBy",
             "popupPosition",
+            "statusItemX",
             "highlightMatch",
             "menuIcon",
             "windowWidth",
@@ -256,6 +268,7 @@ impl Settings {
             "previewWidth",
             "showFooter",
             "popupPosition",
+            "statusItemX",
             "saveImages",
             "saveText",
         ];
@@ -277,6 +290,9 @@ impl Settings {
         raw.insert("pasteByDefault".into(), bool_value(self.paste_by_default));
         raw.insert("showFooter".into(), bool_value(self.show_footer));
         raw.insert("popupPosition".into(), self.popup_position.clone());
+        if let Some(x) = self.status_item_x {
+            raw.insert("statusItemX".into(), format!("{x}"));
+        }
         raw.insert("saveImages".into(), bool_value(self.save_images));
         raw.insert("saveText".into(), bool_value(self.save_text));
         raw.insert("showSearch".into(), bool_value(self.show_search));
@@ -296,6 +312,9 @@ impl Settings {
         raw.insert("searchMode".into(), self.search_mode.clone());
         raw.insert("sortBy".into(), self.sort_by.clone());
         raw.insert("popupPosition".into(), self.popup_position.clone());
+        if let Some(x) = self.status_item_x {
+            raw.insert("statusItemX".into(), format!("{x}"));
+        }
         raw.insert("highlightMatch".into(), self.highlight_match.clone());
         raw.insert("menuIcon".into(), self.menu_icon.clone());
         raw.insert("windowWidth".into(), self.window_width.to_string());

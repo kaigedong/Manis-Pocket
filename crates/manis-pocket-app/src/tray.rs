@@ -18,7 +18,10 @@ use futures::channel::mpsc::UnboundedSender;
 /// so the menu bar height is a constant instead.
 #[derive(Clone, Copy, Debug)]
 pub struct TrayAnchor {
+    /// Left edge of the icon, in points.
     pub x: f64,
+    /// Bottom edge of the icon, in points, measured from the top of the screen.
+    pub y: f64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -102,8 +105,16 @@ mod macos {
                     ..
                 } = event
                 {
-                    // The pointer is over the icon, so its x is the icon's x.
-                    let anchor = TrayAnchor { x: position.x };
+                    // The pointer is over the icon, so its x is the icon's x;
+                    // the y comes from AppKit below.
+                    // The event carries physical pixels; the layout works in
+                    // points. AppKit reports the status item window as a
+                    // zero-sized placeholder, so the pointer is the only
+                    // trustworthy source and its x is remembered.
+                    let anchor = TrayAnchor {
+                        x: position.x / screen_scale(),
+                        y: 24.0,
+                    };
                     // The panel toggles, so a second click closes it again.
                     if click_tx
                         .unbounded_send(TrayCommand::Toggle(Some(anchor)))
@@ -160,6 +171,17 @@ mod macos {
 thread_local! {
     static STATUS_ICON: std::cell::RefCell<Option<tray_icon::TrayIcon>> =
         const { std::cell::RefCell::new(None) };
+}
+
+/// Backing scale of the main screen, to turn tray event pixels into points.
+#[cfg(target_os = "macos")]
+fn screen_scale() -> f64 {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSScreen;
+    MainThreadMarker::new()
+        .and_then(|mtm| NSScreen::mainScreen(mtm))
+        .map(|screen| f64::from(screen.backingScaleFactor()))
+        .unwrap_or(1.0)
 }
 
 #[cfg(target_os = "linux")]

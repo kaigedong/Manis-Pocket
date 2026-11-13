@@ -60,6 +60,30 @@ pub fn icon_for_bundle(bundle_id: &str) -> Option<Arc<RenderImage>> {
     crate::apps_linux::icon_for_app(bundle_id)
 }
 
+/// The application's display name, for the filter bar tooltips.
+#[cfg(target_os = "macos")]
+pub fn app_name(bundle_id: &str) -> String {
+    static NAMES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    let names = NAMES.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = names
+        .lock()
+        .ok()
+        .and_then(|names| names.get(bundle_id).cloned())
+    {
+        return hit;
+    }
+    let name = macos::bundle_display_name(bundle_id).unwrap_or_else(|| bundle_id.to_string());
+    if let Ok(mut names) = names.lock() {
+        names.insert(bundle_id.to_string(), name.clone());
+    }
+    name
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn app_name(bundle_id: &str) -> String {
+    bundle_id.to_string()
+}
+
 /// Row thumbnails, keyed by history item id. Filled off the paint path and only
 /// read while painting, for the same re-entrancy reason as the app icons.
 ///
@@ -174,6 +198,17 @@ mod macos {
     use objc2::AnyThread;
     use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSWorkspace};
     use objc2_foundation::{NSDictionary, NSString};
+
+    /// The name Finder shows for the app, e.g. "Safari" for com.apple.Safari.
+    pub fn bundle_display_name(bundle_id: &str) -> Option<String> {
+        use objc2_foundation::NSFileManager;
+        let workspace = unsafe { NSWorkspace::sharedWorkspace() };
+        let identifier = NSString::from_str(bundle_id);
+        let url = unsafe { workspace.URLForApplicationWithBundleIdentifier(&identifier) }?;
+        let path = url.path()?;
+        let name = unsafe { NSFileManager::defaultManager().displayNameAtPath(&path) };
+        Some(name.to_string())
+    }
 
     pub fn load(bundle_id: &str) -> Option<Arc<RenderImage>> {
         let workspace = unsafe { NSWorkspace::sharedWorkspace() };

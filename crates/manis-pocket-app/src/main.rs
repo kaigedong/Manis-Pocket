@@ -401,10 +401,20 @@ impl ListDelegate for HistoryList {
                           hovered: &bool,
                           _window: &mut Window,
                           cx: &mut Context<ListState<HistoryList>>| {
-                        let target = hovered.then(|| hover_id.clone());
                         let delegate = state.delegate_mut();
-                        if delegate.hovered != target {
-                            delegate.hovered = target;
+                        // Enter and leave arrive in pointer order, so sweeping
+                        // down delivered the old row's leave after the new row's
+                        // enter and wiped the hover. Only clear our own.
+                        let changed = if *hovered {
+                            delegate.hovered = Some(hover_id.clone());
+                            true
+                        } else if delegate.hovered.as_deref() == Some(hover_id.as_str()) {
+                            delegate.hovered = None;
+                            true
+                        } else {
+                            false
+                        };
+                        if changed {
                             cx.notify();
                         }
                     },
@@ -751,7 +761,12 @@ impl HistoryPanel {
     fn source_apps(&self) -> Vec<String> {
         let mut apps: Vec<String> = Vec::new();
         for item in &self.all_items {
-            let app = item.application.clone().unwrap_or_default();
+            let Some(app) = item.application.clone() else {
+                continue;
+            };
+            if app.is_empty() {
+                continue;
+            }
             if !apps.contains(&app) {
                 apps.push(app);
             }
@@ -1030,11 +1045,15 @@ impl HistoryPanel {
             let selected = active.as_deref() == Some(app.as_str());
             let dimmed = active.is_some() && !selected;
             let target = app.clone();
+            let app_name = icons::app_name(&app);
             let mut button = div()
                 .id(SharedString::from(format!("app-filter-{app}")))
                 .p(px(2.0))
                 .rounded(px(4.0))
                 .cursor_pointer()
+                .tooltip(move |window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(app_name.clone()).build(window, cx)
+                })
                 .child(icon);
             button = if selected {
                 button

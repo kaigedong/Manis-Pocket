@@ -24,6 +24,11 @@ else
 fi
 
 ASSETS=(ManisPocket.app.zip app-debug.apk "release-feed/$FEED_NAME")
+# The Linux tarball rides along when the build produced one.
+LINUX_ASSET=ManisPocket-linux-x86_64.tar.gz
+if [ -s "$LINUX_ASSET" ]; then
+  ASSETS+=("$LINUX_ASSET")
+fi
 for asset in "${ASSETS[@]}"; do
   test -s "$asset"
 done

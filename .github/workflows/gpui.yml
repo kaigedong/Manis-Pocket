@@ -4,12 +4,8 @@ name: GPUI build
 # build.yml so the shipped SwiftUI/Android release is not disturbed while the
 # rewrite is still being finished.
 on:
-  push:
-    branches: [master, feat/gpui-rewrite]
-    tags: ['v*']
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
+  # master and tag pushes are covered by build.yml, which also packages the
+  # release; running here too would build Linux twice for nothing.
   pull_request:
     paths:
       - 'crates/**'
@@ -68,52 +64,10 @@ jobs:
           mkdir -p dist
           cp target/release/manis-pocket dist/
           cp scripts/install-linux.sh dist/
-          tar -czf dist/ManisPocket-gpui-linux-x86_64.tar.gz -C dist manis-pocket install-linux.sh
+          tar -czf dist/ManisPocket-linux-x86_64.tar.gz -C dist manis-pocket install-linux.sh
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ManisPocket-gpui-linux
-          path: dist/ManisPocket-gpui-linux-x86_64.tar.gz
+          name: ManisPocket-linux
+          path: dist/ManisPocket-linux-x86_64.tar.gz
           if-no-files-found: error
-
-  # Attaches the GPUI builds to the release that the SwiftUI/Android workflow
-  # publishes, without touching that pipeline. The rewrite becomes downloadable
-  # while the shipped app stays the default download; removing the macOS job from
-  # build.yml is all it takes to make this the only macOS build.
-  publish:
-    name: Attach to release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: ManisPocket-gpui-linux
-
-      - name: Wait for the release to exist
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          # Both workflows start on the same tag; the release is created by the
-          # other one, so give it a few minutes before giving up.
-          for attempt in $(seq 1 30); do
-            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              echo "release $TAG is available"
-              exit 0
-            fi
-            sleep 20
-          done
-          echo "::error::release $TAG never appeared"
-          exit 1
-
-      - name: Upload GPUI assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          gh release upload "$TAG" \
-            ManisPocket-gpui-linux-x86_64.tar.gz \
-            --repo "$GITHUB_REPOSITORY" --clobber

@@ -421,7 +421,7 @@ impl ListDelegate for HistoryList {
                             // Updating the panel touches the list, which cannot
                             // happen while the list is being updated; wait a beat.
                             let id = click_id.clone();
-                            window.defer(cx, move |_window, cx| {
+                            window.on_next_frame(move |_window, cx| {
                                 let _ = panel.update(cx, |panel, cx| {
                                     panel.toggle_checked(id.clone(), cx);
                                 });
@@ -448,7 +448,10 @@ impl ListDelegate for HistoryList {
         // the list's own update, and the panel's loader reads the list, which
         // aborts with "cannot read ListState while it is already being updated".
         if let Some(panel) = self.panel.as_ref().and_then(|panel| panel.upgrade()) {
-            cx.defer_in(_window, move |_state, _window, cx| {
+            // `defer` runs at the end of the current effect cycle, where the list
+            // is still on the update stack and reading it aborts. The next frame
+            // is genuinely outside it.
+            cx.on_next_frame(_window, move |_state, _window, cx| {
                 let _ = panel.update(cx, |panel, cx| {
                     panel.load_preview_image(cx);
                     cx.notify();

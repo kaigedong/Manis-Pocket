@@ -600,24 +600,19 @@ impl HistoryPanel {
 
     /// The action footer: the same five rows the macOS build puts under the list.
     fn render_footer(&self, cx: &mut Context<Self>) -> AnyElement {
-        let row = |id: &'static str, label: &'static str, shortcut: &'static str| {
+        // The rows carry the action and nothing else: the shortcuts still work,
+        // but printing them here made a menu look like a cheat sheet.
+        let row = |id: &'static str, label: &'static str| {
             h_flex()
                 .id(id)
                 .w_full()
                 .min_h(px(ROW_MIN_HEIGHT))
                 .px_2()
-                .justify_between()
                 .text_size(px(13.0))
                 .rounded(px(ROW_CORNER))
                 .hover(|style| style.bg(gpui::black().opacity(0.06)))
                 .cursor_pointer()
                 .child(div().child(label))
-                .child(
-                    div()
-                        .text_size(px(11.0))
-                        .text_color(gpui::black().opacity(0.4))
-                        .child(shortcut),
-                )
         };
 
         v_flex()
@@ -630,7 +625,7 @@ impl HistoryPanel {
                     .bg(gpui::black().opacity(0.08)),
             )
             .child(
-                row("footer-clear", "清除", "⌥⌘Del").on_click(cx.listener(|this, _, _, cx| {
+                row("footer-clear", "清除").on_click(cx.listener(|this, _, _, cx| {
                     let _ = this.history.clear_unpinned();
                     this.reload(cx);
                 })),
@@ -643,7 +638,6 @@ impl HistoryPanel {
                     } else {
                         "全部清除"
                     },
-                    "⇧⌥⌘Del",
                 )
                 .on_click(cx.listener(|this, _, _, cx| {
                     if !clear_all_armed(&mut this.confirm_clear_all) {
@@ -656,20 +650,18 @@ impl HistoryPanel {
                     this.reload(cx);
                 })),
             )
+            .child(row("footer-preferences", "偏好设置…").on_click(cx.listener(
+                |_, _, window, cx| {
+                    let _ = window;
+                    open_settings(cx);
+                },
+            )))
             .child(
-                row("footer-preferences", "偏好设置…", "⌘,").on_click(cx.listener(
-                    |_, _, window, cx| {
-                        let _ = window;
-                        open_settings(cx);
-                    },
-                )),
-            )
-            .child(
-                row("footer-about", "关于", "").on_click(cx.listener(|_, _, _, _cx| {
+                row("footer-about", "关于").on_click(cx.listener(|_, _, _, _cx| {
                     show_about();
                 })),
             )
-            .child(row("footer-quit", "退出", "⌘Q").on_click(cx.listener(|_, _, _, cx| cx.quit())))
+            .child(row("footer-quit", "退出").on_click(cx.listener(|_, _, _, cx| cx.quit())))
             .into_any_element()
     }
 }

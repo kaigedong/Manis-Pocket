@@ -212,6 +212,12 @@ mod macos {
         let identifier = NSString::from_str(bundle_id);
         let url = unsafe { workspace.URLForApplicationWithBundleIdentifier(&identifier) }?;
         let path = url.path()?;
+        // A bundle id can resolve to something that is not an app bundle (a helper,
+        // a framework). Asking for its icon returns the generic document picture,
+        // which is worse than the letter badge, so those get no icon at all.
+        if path.pathExtension().to_string() != "app" {
+            return None;
+        }
         let image = unsafe { workspace.iconForFile(&path) };
         let tiff = unsafe { image.TIFFRepresentation() }?;
         let rep = NSBitmapImageRep::initWithData(NSBitmapImageRep::alloc(), &tiff)?;

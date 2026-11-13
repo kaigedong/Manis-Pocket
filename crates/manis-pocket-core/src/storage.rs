@@ -4,11 +4,16 @@ use std::path::Path;
 
 use crate::model::{ClipboardContent, ClipboardItem, CoreError};
 
+/// The database: schema, migrations and the queries the history is built on.
 pub struct Storage {
     conn: Connection,
 }
 
 impl Storage {
+    /// Opens (or creates) the database at `path` and brings its schema up to date.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the file cannot be opened or a migration fails.
     pub fn open(path: &str) -> Result<Self, CoreError> {
         let conn = if path.is_empty() || path == ":memory:" {
             Connection::open_in_memory()?
@@ -26,6 +31,10 @@ impl Storage {
         Ok(storage)
     }
 
+    /// An empty database in memory, which the tests use.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the schema cannot be created.
     pub fn open_in_memory() -> Result<Self, CoreError> {
         Self::open(":memory:")
     }
@@ -175,6 +184,10 @@ impl Storage {
 
     // ── Sync pairs ────────────────────────────────────────────
 
+    /// The registered peers as `(peer id, display name, is admin)`.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the query fails.
     pub fn get_paired_peers(&self) -> Result<Vec<(String, String, bool)>, CoreError> {
         let mut stmt = self
             .conn
@@ -198,6 +211,10 @@ impl Storage {
         Ok(result)
     }
 
+    /// Inserts or updates a peer that has finished pairing.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the write fails.
     pub fn save_paired_peer(
         &self,
         peer_id: &str,
@@ -213,6 +230,10 @@ impl Storage {
         Ok(())
     }
 
+    /// Marks a peer as an administrator.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the write fails.
     pub fn promote_to_admin(&self, peer_id: &str) -> Result<(), CoreError> {
         self.conn
             .execute(
@@ -223,6 +244,7 @@ impl Storage {
         Ok(())
     }
 
+    /// Whether a peer has granted this device administrator rights.
     pub fn am_admin(&self) -> bool {
         let count: i64 = self
             .conn
@@ -231,6 +253,10 @@ impl Storage {
         count == 0 || true
     }
 
+    /// Forgets a paired peer.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the delete fails.
     pub fn remove_paired_peer(&self, peer_id: &str) -> Result<(), CoreError> {
         self.conn
             .execute(
@@ -243,6 +269,7 @@ impl Storage {
 
     // ── Sync config ───────────────────────────────────────────
 
+    /// Reads a value from the key/value table used for engine state.
     pub fn get_config(&self, key: &str) -> Option<Vec<u8>> {
         self.conn
             .query_row(
@@ -253,6 +280,10 @@ impl Storage {
             .ok()
     }
 
+    /// Writes a value into the key/value table used for engine state.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the write fails.
     pub fn set_config(&self, key: &str, value: &[u8]) -> Result<(), CoreError> {
         self.conn
             .execute(
@@ -263,6 +294,10 @@ impl Storage {
         Ok(())
     }
 
+    /// Writes one entry and its payloads.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when any part of the write fails.
     pub fn insert_item(&self, item: &ClipboardItem) -> Result<(), CoreError> {
         self.conn.execute(
             "INSERT INTO history_items (id, application, first_copied_at, last_copied_at, number_of_copies, pin, title, sync_timestamp, sync_source, sync_deleted)
@@ -292,6 +327,10 @@ impl Storage {
         Ok(())
     }
 
+    /// Every entry with its payloads loaded, which the sync engine needs.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the query fails.
     pub fn get_all_items(&self) -> Result<Vec<ClipboardItem>, CoreError> {
         let mut items = self.get_all_metadata()?;
         for item in &mut items {
@@ -349,6 +388,10 @@ impl Storage {
         self.get_contents_for_item(item_id)
     }
 
+    /// One entry with its payloads, or `None` when the id is unknown.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the query fails.
     pub fn get_item(&self, id: &str) -> Result<Option<ClipboardItem>, CoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, application, first_copied_at, last_copied_at, number_of_copies, pin, title, sync_timestamp, sync_source, sync_deleted
@@ -398,6 +441,10 @@ impl Storage {
         Ok(contents)
     }
 
+    /// Deletes one entry and its payloads.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the delete fails.
     pub fn delete_item(&self, id: &str) -> Result<(), CoreError> {
         let rows = self.conn.execute(
             "DELETE FROM history_contents WHERE item_id = ?1",
@@ -415,6 +462,10 @@ impl Storage {
         Ok(())
     }
 
+    /// Deletes every unpinned entry and reports how many went.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the delete fails.
     pub fn delete_unpinned(&self) -> Result<u64, CoreError> {
         // Delete contents first (foreign key cascade should handle this, but be explicit)
         self.conn.execute(
@@ -427,12 +478,20 @@ impl Storage {
         Ok(rows as u64)
     }
 
+    /// Deletes every entry and reports how many went.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the delete fails.
     pub fn delete_all(&self) -> Result<u64, CoreError> {
         self.conn.execute("DELETE FROM history_contents", [])?;
         let rows = self.conn.execute("DELETE FROM history_items", [])?;
         Ok(rows as u64)
     }
 
+    /// Rewrites an entry's metadata, leaving its payloads alone.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the update fails.
     pub fn update_item(&self, item: &ClipboardItem) -> Result<(), CoreError> {
         self.conn.execute(
             "UPDATE history_items SET application = ?2, first_copied_at = ?3, last_copied_at = ?4,
@@ -560,6 +619,10 @@ impl Storage {
         Ok(ids)
     }
 
+    /// How many entries the table holds.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the query fails.
     pub fn count_items(&self) -> Result<i64, CoreError> {
         let count: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM history_items WHERE sync_deleted = 0",
@@ -569,6 +632,7 @@ impl Storage {
         Ok(count)
     }
 
+    /// Size of the database file in bytes, or zero when it cannot be read.
     pub fn db_size_bytes(&self, path: &str) -> i64 {
         std::fs::metadata(path).map(|m| m.len() as i64).unwrap_or(0)
     }

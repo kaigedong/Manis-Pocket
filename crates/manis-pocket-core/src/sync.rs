@@ -257,28 +257,33 @@ impl SyncEngine {
 
     // ── Peer management ───────────────────────────────────────────
 
+    /// Dials an address entered by hand, for networks where mDNS is silent.
     pub fn add_peer_address(&self, address: &str) {
         self.send(SyncCommand::AddPeerAddress {
             address: address.to_string(),
         });
     }
 
+    /// Starts looking for peers on the local network.
     pub fn start_discovery(&self) {
         self.send(SyncCommand::StartDiscovery);
     }
 
+    /// Stops looking for peers on the local network.
     pub fn stop_discovery(&self) {
         self.send(SyncCommand::StopDiscovery);
     }
 
     // ── Pairing ───────────────────────────────────────────────────
 
+    /// Asks a discovered peer to pair; its answer carries a six-digit code.
     pub fn request_pairing(&self, peer_id: &str) {
         self.send(SyncCommand::RequestPairing {
             peer_id: peer_id.to_string(),
         });
     }
 
+    /// Accepts a pairing request after the user compared the code.
     pub fn accept_pairing(&self, peer_id: &str, pin: &str) {
         self.send(SyncCommand::AcceptPairing {
             peer_id: peer_id.to_string(),
@@ -286,12 +291,14 @@ impl SyncEngine {
         });
     }
 
+    /// Declines a pairing request.
     pub fn reject_pairing(&self, peer_id: &str) {
         self.send(SyncCommand::RejectPairing {
             peer_id: peer_id.to_string(),
         });
     }
 
+    /// Drops a paired peer, disconnecting it if it is connected.
     pub fn unpair(&self, peer_id: &str) {
         self.send(SyncCommand::Unpair {
             peer_id: peer_id.to_string(),
@@ -300,6 +307,7 @@ impl SyncEngine {
 
     // ── Broadcast ─────────────────────────────────────────────────
 
+    /// Sends a new entry to the paired peers.
     pub fn broadcast_item(&self, item: &ClipboardItem) {
         // Only shareable payloads are published. Returning early for anything
         // else (files, oversized images) leaves the peer's clipboard intact
@@ -324,6 +332,7 @@ impl SyncEngine {
         self.send(SyncCommand::ObserveLocalClipboard { value });
     }
 
+    /// Reports whether the platform managed to apply a peer's clipboard value.
     pub fn confirm_current_clipboard(&self, event_id: &str, success: bool) {
         self.send(SyncCommand::CurrentClipboardApplied {
             event_id: event_id.to_owned(),
@@ -331,6 +340,8 @@ impl SyncEngine {
         });
     }
 
+    /// Whether a clipboard event is safe to apply, or would overwrite what the
+    /// user just copied here.
     pub fn should_apply_current_clipboard(&self, event_id: &str) -> bool {
         let (reply, result) = tokio::sync::oneshot::channel();
         if self
@@ -346,12 +357,14 @@ impl SyncEngine {
         result.blocking_recv().unwrap_or(false)
     }
 
+    /// Tells peers that an entry was deleted.
     pub fn broadcast_deletion(&self, item_id: &str) {
         self.send(SyncCommand::BroadcastDeletion {
             item_id: item_id.to_string(),
         });
     }
 
+    /// Tells peers that an entry changed, e.g. its pin or its text.
     pub fn broadcast_update(&self, item: &ClipboardItem) {
         if let Some(json) = Self::serialize_item(item) {
             self.send(SyncCommand::BroadcastUpdate { item_json: json });
@@ -360,6 +373,7 @@ impl SyncEngine {
 
     // ── File transfer ────────────────────────────────────────────
 
+    /// Asks a peer for the contents of one file, which file transfer serves.
     pub fn request_file(&self, peer_id: &str, file_path: &str) {
         let request_id = uuid::Uuid::new_v4().to_string();
         self.send(SyncCommand::SendFileChunk {

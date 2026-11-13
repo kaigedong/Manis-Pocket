@@ -28,6 +28,10 @@ pub struct HistoryManager {
 #[uniffi::export]
 impl HistoryManager {
     #[uniffi::constructor]
+    /// Opens the history at `db_path`, creating and migrating it as needed.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the database cannot be opened or migrated.
     pub fn new(db_path: String) -> Result<Self, CoreError> {
         let storage = Storage::open(&db_path)?;
         let clipboard_state_path = if db_path.is_empty() || db_path == ":memory:" {
@@ -142,6 +146,10 @@ impl HistoryManager {
         Ok(item)
     }
 
+    /// Deletes one entry and its payloads.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the database rejects the delete.
     pub fn delete(&self, id: String) -> Result<(), CoreError> {
         self.storage
             .lock()
@@ -149,6 +157,10 @@ impl HistoryManager {
             .delete_item(&id)
     }
 
+    /// Deletes every unpinned entry and reports how many went.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the database rejects the delete.
     pub fn clear_unpinned(&self) -> Result<u64, CoreError> {
         self.storage
             .lock()
@@ -156,6 +168,10 @@ impl HistoryManager {
             .delete_unpinned()
     }
 
+    /// Deletes everything, pins included, and reports how many went.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the database rejects the delete.
     pub fn clear_all(&self) -> Result<u64, CoreError> {
         self.storage
             .lock()
@@ -163,6 +179,11 @@ impl HistoryManager {
             .delete_all()
     }
 
+    /// Pins an entry with the next free letter, or unpins it.
+    ///
+    /// # Errors
+    /// [`CoreError::NotFound`] when the id is unknown, and [`CoreError::Storage`]
+    /// when the update fails.
     pub fn toggle_pin(
         &self,
         id: String,
@@ -184,6 +205,10 @@ impl HistoryManager {
         Ok(item)
     }
 
+    /// Replaces the text of an entry with what a peer sent.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the update fails.
     pub fn update_item_text(
         &self,
         id: String,
@@ -209,6 +234,10 @@ impl HistoryManager {
         Ok(item)
     }
 
+    /// Matches `query` against `pool`, in the order the caller asked for.
+    ///
+    /// # Errors
+    /// Never fails today; the signature keeps the search engine swappable.
     pub fn search(
         &self,
         query: &str,
@@ -218,6 +247,10 @@ impl HistoryManager {
         SearchEngine::search(query, &items, mode)
     }
 
+    /// Orders entries for display, honouring pins and the chosen sort.
+    ///
+    /// # Errors
+    /// Never fails today.
     pub fn sort(
         &self,
         items: Vec<ClipboardItem>,
@@ -227,6 +260,7 @@ impl HistoryManager {
         sort_items(items, sort_by, pin_to_top)
     }
 
+    /// Size of the database file in bytes, or zero when it cannot be read.
     pub fn storage_size_bytes(&self, db_path: String) -> i64 {
         self.storage
             .lock()
@@ -234,6 +268,10 @@ impl HistoryManager {
             .unwrap_or(0)
     }
 
+    /// How many entries the history holds.
+    ///
+    /// # Errors
+    /// [`CoreError::Storage`] when the database cannot be queried.
     pub fn count(&self) -> Result<i64, CoreError> {
         self.storage
             .lock()
@@ -368,6 +406,7 @@ impl HistoryManager {
         Ok(())
     }
 
+    /// Dials an address entered by hand, for networks where mDNS is silent.
     pub fn sync_add_peer_address(&self, address: String) {
         if let Ok(guard) = self.sync_engine.lock()
             && let Some(ref e) = *guard
@@ -376,6 +415,8 @@ impl HistoryManager {
         }
     }
 
+    /// Starts local discovery. The current engine reports readiness at build time,
+    /// so this is a no-op kept for the platform layer.
     pub fn sync_start_discovery(&self) {
         if let Ok(guard) = self.sync_engine.lock()
             && let Some(ref e) = *guard
@@ -384,6 +425,7 @@ impl HistoryManager {
         }
     }
 
+    /// Stops local discovery; the counterpart of [`Self::sync_start_discovery`].
     pub fn sync_stop_discovery(&self) {
         if let Ok(guard) = self.sync_engine.lock()
             && let Some(ref e) = *guard
@@ -402,6 +444,7 @@ impl HistoryManager {
         }
     }
 
+    /// Asks a discovered peer to pair; the peer answers with a six-digit code.
     pub fn sync_request_pairing(&self, peer_id: String) {
         if let Ok(guard) = self.sync_engine.lock()
             && let Some(ref e) = *guard
@@ -410,6 +453,7 @@ impl HistoryManager {
         }
     }
 
+    /// Accepts a pairing request after the user compared the code.
     pub fn sync_accept_pairing(&self, peer_id: String, pin: String) {
         if let Ok(guard) = self.sync_engine.lock()
             && let Some(ref e) = *guard
@@ -418,6 +462,7 @@ impl HistoryManager {
         }
     }
 
+    /// Declines a pairing request.
     pub fn sync_reject_pairing(&self, peer_id: String) {
         if let Ok(guard) = self.sync_engine.lock()
             && let Some(ref e) = *guard
@@ -426,6 +471,7 @@ impl HistoryManager {
         }
     }
 
+    /// Drops a paired peer from the running engine and from the register.
     pub fn sync_unpair(&self, peer_id: String) {
         if let Ok(guard) = self.sync_engine.lock()
             && let Some(ref e) = *guard
@@ -464,6 +510,8 @@ impl HistoryManager {
         }
     }
 
+    /// Whether a clipboard event came from this device, in which case applying it
+    /// would overwrite what the user just copied.
     pub fn sync_should_apply_current_clipboard(&self, event_id: String) -> bool {
         self.sync_engine
             .lock()
@@ -540,6 +588,7 @@ impl HistoryManager {
             })
             .collect()
     }
+    /// Records a peer that has just finished pairing.
     pub fn save_paired_peer(&self, peer_id: String, display_name: String, is_admin: bool) {
         match self.storage.lock() {
             Ok(s) => {

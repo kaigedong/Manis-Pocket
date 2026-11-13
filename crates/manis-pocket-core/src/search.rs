@@ -6,9 +6,13 @@ use crate::model::{ClipboardItem, MatchRange, SearchMode, SearchResult};
 
 const FUZZY_SEARCH_LIMIT: usize = 5_000;
 
+/// Stateless entry point for matching a query against entries.
 pub struct SearchEngine;
 
 impl SearchEngine {
+    /// Matches `query` against `items`, preserving the order it was given.
+    ///
+    /// An empty query returns everything unranked; callers sort afterwards.
     pub fn search(query: &str, items: &[ClipboardItem], mode: SearchMode) -> Vec<SearchResult> {
         if query.is_empty() {
             return items

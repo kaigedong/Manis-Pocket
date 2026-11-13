@@ -6,11 +6,11 @@
     <description>Manis Pocket beta updates.</description>
     <language>en</language>
     <item>
-      <title>Manis Pocket Beta 2.7.131</title>
-      <description>Manis Pocket Beta 2.7.131.</description>
-      <pubDate>Fri, 13 Nov 2026 03:07:55 GMT</pubDate>
+      <title>Manis Pocket Beta 2.7.132</title>
+      <description>Manis Pocket Beta 2.7.132.</description>
+      <pubDate>Fri, 13 Nov 2026 03:20:53 GMT</pubDate>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/kaigedong/Manis-Pocket/releases/download/build-2.7.131/ManisPocket.app.zip" sparkle:version="131" sparkle:shortVersionString="2.7.131" length="12060647" type="application/octet-stream" />
+      <enclosure url="https://github.com/kaigedong/Manis-Pocket/releases/download/build-2.7.132/ManisPocket.app.zip" sparkle:version="132" sparkle:shortVersionString="2.7.132" length="12041391" type="application/octet-stream" />
     </item>
   </channel>
 </rss>

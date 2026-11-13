@@ -61,6 +61,9 @@ mod macos {
     use tray_icon::{Icon, TrayIconBuilder};
 
     pub fn install(tx: UnboundedSender<TrayCommand>, menu_icon: &str) -> bool {
+        // Warm the scale on the main thread so the click handler can convert
+        // its physical pixels.
+        let _ = screen_scale();
         let menu = Menu::new();
         let open_item = MenuItem::new("打开 Manis Pocket", true, None);
         let settings_item = MenuItem::new("设置…", true, None);
@@ -173,15 +176,28 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-/// Backing scale of the main screen, to turn tray event pixels into points.
+/// Backing scale of the main screen, read once on the main thread.
+///
+/// The tray reports clicks from its own thread, where `MainThreadMarker` is not
+/// available, and reading the screen there silently returned 1.0 — which stored
+/// the pointer position in physical pixels instead of points.
+#[cfg(target_os = "macos")]
+static SCREEN_SCALE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[cfg(target_os = "macos")]
 fn screen_scale() -> f64 {
+    let stored = SCREEN_SCALE.load(std::sync::atomic::Ordering::Relaxed);
+    if stored != 0 {
+        return f64::from_bits(stored);
+    }
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSScreen;
-    MainThreadMarker::new()
+    let scale: f64 = MainThreadMarker::new()
         .and_then(|mtm| NSScreen::mainScreen(mtm))
-        .map(|screen| f64::from(screen.backingScaleFactor()))
-        .unwrap_or(1.0)
+        .map(|screen| screen.backingScaleFactor())
+        .unwrap_or(1.0);
+    SCREEN_SCALE.store(scale.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    scale
 }
 
 #[cfg(target_os = "linux")]

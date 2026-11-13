@@ -7,10 +7,8 @@
 //! Linux has no equivalent (icons come from the desktop's icon theme and need the
 //! `.desktop` entry), so there the row keeps the letter badge.
 
-#[cfg(target_os = "macos")]
 use std::collections::HashMap;
 use std::sync::Arc;
-#[cfg(target_os = "macos")]
 use std::sync::{Mutex, OnceLock};
 
 use gpui_kit::RenderImage;
@@ -60,6 +58,39 @@ pub fn preload<'a>(_bundle_ids: impl IntoIterator<Item = &'a str>) {}
 pub fn icon_for_bundle(bundle_id: &str) -> Option<Arc<RenderImage>> {
     // On Linux the "bundle id" is the window class from the compositor.
     crate::apps_linux::icon_for_app(bundle_id)
+}
+
+/// Row thumbnails, keyed by history item id. Filled off the paint path and only
+/// read while painting, for the same re-entrancy reason as the app icons.
+///
+/// One static for all three functions: a `static` inside a function is its own
+/// instance, so separate declarations would read and write different maps.
+type Thumbs = HashMap<String, Option<(Arc<RenderImage>, f32, f32)>>;
+static ROW_THUMBS: OnceLock<Mutex<Thumbs>> = OnceLock::new();
+
+fn thumbs() -> &'static Mutex<Thumbs> {
+    ROW_THUMBS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn cached_thumb(id: &str) -> Option<(Arc<RenderImage>, f32, f32)> {
+    thumbs().lock().ok()?.get(id).cloned().flatten()
+}
+
+pub fn store_thumb(id: &str, thumb: Option<(Arc<RenderImage>, f32, f32)>) {
+    if let Ok(mut cache) = thumbs().lock() {
+        // Bound the cache so scrolling a long history cannot grow it forever.
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        cache.insert(id.to_string(), thumb);
+    }
+}
+
+pub fn has_thumb(id: &str) -> bool {
+    thumbs()
+        .lock()
+        .map(|cache| cache.contains_key(id))
+        .unwrap_or(true)
 }
 
 /// Puts PNG bytes on the general pasteboard.

@@ -54,6 +54,9 @@ fn history() -> Arc<HistoryManager> {
 /// 22 px row because SwiftUI's default leading is tighter than GPUI's, and GPUI
 /// exposes no line-height setter, so the pitch stays a little looser.
 const ROW_MIN_HEIGHT: f32 = 20.0;
+/// Thumbnail height for image rows. The list takes one measurement for every
+/// row, so this has to fit inside the normal row pitch.
+const ROW_THUMB_HEIGHT: f32 = 22.0;
 /// What one row actually occupies, used for the window's height.
 const ROW_PITCH: f32 = 30.0;
 /// Height of the application filter bar.
@@ -241,19 +244,38 @@ impl ListDelegate for HistoryList {
             .unwrap_or_else(|| vec![(title.clone(), false)]);
         let highlight_background = self.highlight_background;
 
-        row = row.child(h_flex().flex_1().min_w(px(0.0)).overflow_hidden().children(
-            spans.into_iter().map(|(text, matched)| {
-                let mut span = div().child(text);
-                if matched {
-                    span = if highlight_background {
-                        span.bg(gpui::rgb(0xFFF1_76))
-                    } else {
-                        span.font_weight(gpui::FontWeight::BOLD)
-                    };
-                }
-                span
-            }),
-        ));
+        // An image entry shows its picture rather than the word "图片": the
+        // SwiftUI row draws a thumbnail up to 40 high in place of the title.
+        let image_thumb = match rows::row_kind(item) {
+            rows::RowKind::Image => icons::cached_thumb(&item.id),
+            _ => None,
+        };
+        row = match image_thumb {
+            Some((render, width, height)) => {
+                // The list measures one row and applies it to all of them, so a
+                // tall thumbnail would stretch every text row with it.
+                let scale = (ROW_THUMB_HEIGHT / height).min(340.0 / width).min(1.0);
+                row.child(
+                    img(render)
+                        .w(px(width * scale))
+                        .h(px(height * scale))
+                        .rounded(px(3.0)),
+                )
+            }
+            None => row.child(h_flex().flex_1().min_w(px(0.0)).overflow_hidden().children(
+                spans.into_iter().map(|(text, matched)| {
+                    let mut span = div().child(text);
+                    if matched {
+                        span = if highlight_background {
+                            span.bg(gpui::rgb(0xFFF1_76))
+                        } else {
+                            span.font_weight(gpui::FontWeight::BOLD)
+                        };
+                    }
+                    span
+                }),
+            )),
+        };
 
         let click_id = item.id.clone();
         let click_history = self.history.clone();
@@ -704,15 +726,17 @@ impl HistoryPanel {
     }
 
     /// Applications present in the history, used by the filter bar.
+    /// Applications present in the history, in the order they appear in the list
+    /// (most recent first). The empty string is the "unknown source" bucket the
+    /// SwiftUI bar shows separately, so it is kept.
     fn source_apps(&self) -> Vec<String> {
-        let mut apps: Vec<String> = self
-            .all_items
-            .iter()
-            .filter_map(|item| item.application.clone())
-            .filter(|app| !app.is_empty())
-            .collect();
-        apps.sort();
-        apps.dedup();
+        let mut apps: Vec<String> = Vec::new();
+        for item in &self.all_items {
+            let app = item.application.clone().unwrap_or_default();
+            if !apps.contains(&app) {
+                apps.push(app);
+            }
+        }
         apps
     }
 
@@ -825,6 +849,42 @@ impl HistoryPanel {
         };
         icons::preload(apps.iter().map(String::as_str));
         cx.notify();
+    }
+
+    /// Decodes row thumbnails for image entries, off the paint path.
+    fn load_row_images(&mut self, cx: &mut Context<Self>) {
+        let ids: Vec<String> = {
+            let delegate = self.list.read(cx).delegate();
+            delegate
+                .items
+                .iter()
+                .filter(|item| matches!(rows::row_kind(item), rows::RowKind::Image))
+                .map(|item| item.id.clone())
+                .take(60)
+                .collect()
+        };
+        let mut loaded_any = false;
+        for id in ids {
+            if icons::has_thumb(&id) {
+                continue;
+            }
+            let thumb = self
+                .history
+                .contents(id.clone())
+                .ok()
+                .and_then(|contents| {
+                    contents
+                        .into_iter()
+                        .find(|content| content.content_type == "public.png")
+                })
+                .and_then(|content| content.value)
+                .and_then(|bytes| icons::png_to_render_image(&bytes, 340));
+            icons::store_thumb(&id, thumb);
+            loaded_any = true;
+        }
+        if loaded_any {
+            cx.notify();
+        }
     }
 
     fn load_preview_image(&mut self, cx: &mut Context<Self>) {
@@ -949,6 +1009,7 @@ impl HistoryPanel {
             };
 
             let selected = active.as_deref() == Some(app.as_str());
+            let dimmed = active.is_some() && !selected;
             let target = app.clone();
             let mut button = div()
                 .id(SharedString::from(format!("app-filter-{app}")))
@@ -957,9 +1018,15 @@ impl HistoryPanel {
                 .cursor_pointer()
                 .child(icon);
             button = if selected {
-                button.bg(gpui::rgb(0x0A84FF).opacity(0.25))
+                button
+                    .bg(gpui::rgb(0x0A84FF).opacity(0.20))
+                    .border_1()
+                    .border_color(gpui::rgb(0x0A84FF).opacity(0.80))
+            } else if dimmed {
+                // The SwiftUI bar fades the apps that are not filtering.
+                button.opacity(0.45)
             } else {
-                button.hover(|style| style.bg(gpui::black().opacity(0.06)))
+                button.hover(|style| style.bg(gpui::black().opacity(0.08)))
             };
             bar = bar.child(button.on_click(cx.listener(move |this, _, _, cx| {
                 this.active_app = if this.active_app.as_deref() == Some(target.as_str()) {
@@ -1341,9 +1408,23 @@ fn panel_bounds(
 
     // A click on the status icon pins the panel under the icon, whatever the
     // position setting says — that is what the SwiftUI build does.
-    if let Some(anchor) = anchor {
-        let (x, y) = placement::anchored_origin(&screen, panel, anchor, screen_scale());
-        return Bounds::new(clamp(x, y), panel);
+    // Every entry point opens under the status icon; the setting can only move
+    // the panel to the middle of the screen instead. A click carries the icon
+    // rectangle, the shortcut and IPC ask the tray for it.
+    if settings.popup_position != "center" {
+        if let Some(anchor) = anchor {
+            let (x, y) = placement::anchored_origin(&screen, panel, anchor, screen_scale());
+            return Bounds::new(clamp(x, y), panel);
+        }
+        // Straight after launch the status item has no frame yet; the top-right
+        // corner is where it will be, and it beats following the pointer.
+        return Bounds::new(
+            clamp(
+                default_origin(&screen, panel).x.as_f32(),
+                default_origin(&screen, panel).y.as_f32(),
+            ),
+            panel,
+        );
     }
 
     let origin = match settings.popup_position.as_str() {
@@ -1352,14 +1433,6 @@ fn panel_bounds(
             screen.origin.x + (screen.size.width - panel.width) / 2.0,
             screen.origin.y + (screen.size.height - panel.height) / 2.0,
         ),
-        // At the pointer: the panel's top-left corner follows the cursor
-        // (macOS `.cursor` default). The pointer can be on another display, and
-        // the Y flip for the main screen does not apply there, so a point outside
-        // this display falls back to the corner instead of going off-screen.
-        "cursor" => match mouse_location(&screen) {
-            Some(mouse) if within(&screen, mouse) => clamp(mouse.x.as_f32(), mouse.y.as_f32()),
-            _ => default_origin(&screen, panel),
-        },
         // `statusItem`, `window` and `lastPosition` need the menu-bar button or
         // the frontmost window rectangle, which are not wired yet; the top-right
         // anchor is their closest honest approximation.
@@ -1386,14 +1459,6 @@ fn screen_scale() -> f32 {
     1.0
 }
 
-/// Whether a point lies inside a display's bounds.
-fn within(screen: &Bounds<gpui::Pixels>, point: Point<gpui::Pixels>) -> bool {
-    point.x >= screen.origin.x
-        && point.y >= screen.origin.y
-        && point.x <= screen.origin.x + screen.size.width
-        && point.y <= screen.origin.y + screen.size.height
-}
-
 /// Top-right corner, 10px from the edge and 6px under the menu bar.
 ///
 /// The window carries a transparent margin for the card's shadow, so the offset
@@ -1406,44 +1471,6 @@ fn default_origin(screen: &Bounds<gpui::Pixels>, panel: Size<gpui::Pixels>) -> P
         screen.origin.x + screen.size.width - panel.width + margin - gap,
         screen.origin.y + menu_bar + px(6.0) - margin,
     )
-}
-
-/// Current pointer position in window coordinates (origin top-left).
-///
-/// macOS reports the mouse with a bottom-left origin, Hyprland with a top-left
-/// one; both are normalised here so the caller only sees screen space.
-#[cfg(target_os = "macos")]
-fn mouse_location(screen: &Bounds<gpui::Pixels>) -> Option<Point<gpui::Pixels>> {
-    let location = unsafe { objc2_app_kit::NSEvent::mouseLocation() };
-    let x = location.x as f32;
-    let y_from_bottom = location.y as f32;
-    // Flip into the top-left origin the rest of the layout uses, relative to the
-    // display (multi-monitor safe: the display origin is subtracted first).
-    let screen_bottom = screen.origin.y.as_f32() + screen.size.height.as_f32();
-    let y = screen_bottom - y_from_bottom;
-    Some(point(px(x), px(y)))
-}
-
-#[cfg(target_os = "linux")]
-fn mouse_location(_screen: &Bounds<gpui::Pixels>) -> Option<Point<gpui::Pixels>> {
-    let output = std::process::Command::new("hyprctl")
-        .arg("cursorpos")
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let (x, y) = text.trim().split_once(',')?;
-    Some(point(
-        px(x.trim().parse::<f32>().ok()?),
-        px(y.trim().parse::<f32>().ok()?),
-    ))
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn mouse_location(_screen: &Bounds<gpui::Pixels>) -> Option<Point<gpui::Pixels>> {
-    None
 }
 
 /// Reports whether the command reached a running instance.
@@ -1547,6 +1574,7 @@ fn open_panel_at(cx: &mut App, anchor: Option<tray::TrayAnchor>) {
                 handle.update(cx, |panel, cx| {
                     panel.sync_checked(cx);
                     panel.load_app_icons(cx);
+                    panel.load_row_images(cx);
                     panel.load_preview_image(cx);
                 });
             });

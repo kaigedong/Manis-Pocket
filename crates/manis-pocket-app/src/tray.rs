@@ -11,14 +11,14 @@
 
 use futures::channel::mpsc::UnboundedSender;
 
-/// Where the status icon sits, in the physical pixels the tray reports.
+/// Where the status icon is, in the physical pixels the tray reports.
 ///
-/// The panel opens under this rectangle when the click came from the icon, the
-/// way the SwiftUI build forces `.statusItem` for that one entry point.
+/// Only the horizontal position is taken from the event: the rectangle the tray
+/// library reports is the status bar window (full screen width), not the button,
+/// so the menu bar height is a constant instead.
 #[derive(Clone, Copy, Debug)]
 pub struct TrayAnchor {
-    pub left: f64,
-    pub bottom: f64,
+    pub x: f64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -87,8 +87,9 @@ mod macos {
         let Ok(tray) = tray else {
             return false;
         };
-        // Dropping the TrayIcon removes the status item.
-        Box::leak(Box::new(tray));
+        // The icon lives for the whole process; keeping it also lets the panel
+        // ask where the status item is before opening.
+        STATUS_ICON.with(|slot| *slot.borrow_mut() = Some(tray));
 
         let click_tx = tx.clone();
         std::thread::spawn(move || {
@@ -97,14 +98,12 @@ mod macos {
                 if let TrayIconEvent::Click {
                     button: MouseButton::Left,
                     button_state: MouseButtonState::Up,
-                    rect,
+                    position,
                     ..
                 } = event
                 {
-                    let anchor = TrayAnchor {
-                        left: rect.position.x,
-                        bottom: rect.position.y + f64::from(rect.size.height),
-                    };
+                    // The pointer is over the icon, so its x is the icon's x.
+                    let anchor = TrayAnchor { x: position.x };
                     // The panel toggles, so a second click closes it again.
                     if click_tx
                         .unbounded_send(TrayCommand::Toggle(Some(anchor)))
@@ -152,6 +151,15 @@ mod macos {
         let (width, height) = image.dimensions();
         Icon::from_rgba(image.into_raw(), width, height).ok()
     }
+}
+
+// The status item lives for the whole process. It is an `Rc`-based handle and may
+// only be touched from the main thread, which is where both the tray and the
+// panel are created.
+#[cfg(target_os = "macos")]
+thread_local! {
+    static STATUS_ICON: std::cell::RefCell<Option<tray_icon::TrayIcon>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(target_os = "linux")]

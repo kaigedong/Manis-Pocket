@@ -347,11 +347,7 @@ impl SettingsView {
                 rows.push(pick_row(
                     "popup-position",
                     "面板位置",
-                    &[
-                        ("cursor", "光标"),
-                        ("statusItem", "菜单栏"),
-                        ("center", "屏幕中央"),
-                    ],
+                    &[("statusItem", "菜单栏图标下方"), ("center", "屏幕中央")],
                     &self.settings.popup_position,
                     |settings, value| settings.popup_position = value.to_string(),
                     cx,

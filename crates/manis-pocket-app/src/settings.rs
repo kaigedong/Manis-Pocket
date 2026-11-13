@@ -72,7 +72,9 @@ impl Default for Settings {
             show_special_symbols: true,
             search_mode: "exact".into(),
             sort_by: "lastCopiedAt".into(),
-            popup_position: "cursor".into(),
+            // The panel belongs to the status icon; "cursor" was the SwiftUI
+            // default and left the panel following the pointer.
+            popup_position: "statusItem".into(),
             save_images: true,
             save_text: true,
             highlight_match: "bold".into(),

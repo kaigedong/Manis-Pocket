@@ -600,7 +600,7 @@ fn main() {
             let (ipc_tx, mut ipc_rx) = futures::channel::mpsc::unbounded();
             ipc::listen(&storage_path(), ipc_tx);
 
-            start_clipboard_capture(cx, history(), settings::Settings::load(&storage_path()));
+            start_clipboard_capture(cx, history(), storage_path());
 
             if open_settings_at_launch {
                 open_settings(cx);
@@ -766,11 +766,17 @@ fn record_clipboard_change(
 }
 
 /// Starts clipboard capture for the lifetime of the process.
-fn start_clipboard_capture(cx: &mut App, history: Arc<HistoryManager>, settings: Settings) {
+///
+/// The settings are re-read for every copy instead of captured once: the save
+/// switches, the ignore rules and the history limit are all meant to apply to the
+/// next thing you copy, not to the next launch. The file is small, and a copy
+/// happens at human speed.
+fn start_clipboard_capture(cx: &mut App, history: Arc<HistoryManager>, database: String) {
     let (tx, mut rx) = futures::channel::mpsc::unbounded();
     clipboard::spawn(tx);
     cx.spawn(async move |_cx| {
         while let Some(copy) = rx.next().await {
+            let settings = Settings::load(&database);
             record_clipboard_change(&history, &settings, copy);
         }
     })

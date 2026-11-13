@@ -11,6 +11,7 @@ Manis Pocket 是轻量的剪贴板历史工具，支持快速搜索、固定常�
 - [安装](docs/install.md)
 - [使用](docs/usage.md)
 - [开发](docs/development.md)
+- [架构](docs/architecture.md)
 
 ## 许可证
 

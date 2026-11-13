@@ -28,6 +28,7 @@ use gpui::{
     WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point, px, size,
 };
 use gpui_kit::base::{IndexPath, StyledExt, h_flex, v_flex};
+use gpui_kit::component::Sizable;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::list::{List, ListDelegate, ListItem, ListState};
 use gpui_kit::img;
@@ -265,61 +266,60 @@ impl ListDelegate for HistoryList {
         // ⌘N hint the SwiftUI build shows.
         let hovering = self.hovered.as_deref() == Some(item.id.as_str());
         let trailing_inner = if hovering {
-            let copy_id = item.id.clone();
-            let copy_history = self.history.clone();
+            // A row is copied by clicking it, so the only actions left are pin
+            // and delete. Pinned rows show the unpin glyph.
+            let pin_id = item.id.clone();
+            let pin_history = self.history.clone();
+            let pin_icon = if item.pin.is_some() {
+                gpui_kit::assets::IconName::PinOff
+            } else {
+                gpui_kit::assets::IconName::Pin
+            };
+            let used: Vec<String> = self
+                .items
+                .iter()
+                .filter_map(|entry| entry.pin.clone())
+                .collect();
             let delete_id = item.id.clone();
             let delete_history = self.history.clone();
             h_flex()
                 .gap_1()
                 .flex_shrink_0()
-                .child(
-                    div()
-                        .id(SharedString::from(format!("copy-{}", item.id)))
-                        .px_1()
-                        .rounded(px(3.0))
-                        .hover(|style| style.bg(gpui::black().opacity(0.08)))
-                        .cursor_pointer()
-                        .text_color(if selected {
-                            gpui::white()
-                        } else {
-                            gpui::black().opacity(0.55)
-                        })
-                        .child("复制")
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            if copy_entry_to_clipboard(&copy_history, &copy_id) {
-                                cx.notify();
+                .child(action_icon_button(
+                    SharedString::from(format!("act-{}-pin", item.id)),
+                    pin_icon,
+                    selected,
+                    cx.listener(move |state, _, window, cx| {
+                        let history = pin_history.clone();
+                        let id = pin_id.clone();
+                        let pins = rows::available_pins(&used);
+                        let panel = state.delegate().panel.clone();
+                        // Toggling reloads the list, which cannot happen while the
+                        // list is dispatching this click.
+                        cx.on_next_frame(window, move |_state, _window, cx| {
+                            let _ = history.toggle_pin(id.clone(), pins.clone());
+                            if let Some(panel) = panel.as_ref().and_then(|panel| panel.upgrade()) {
+                                let _ = panel.update(cx, |panel, cx| panel.reload(cx));
                             }
-                        })),
-                )
-                .child(
-                    div()
-                        .id(SharedString::from(format!("delete-{}", item.id)))
-                        .px_1()
-                        .rounded(px(3.0))
-                        .hover(|style| style.bg(gpui::black().opacity(0.08)))
-                        .cursor_pointer()
-                        .text_color(if selected {
-                            gpui::white()
-                        } else {
-                            gpui::black().opacity(0.55)
-                        })
-                        .child("删除")
-                        .on_click(cx.listener(move |state, _, window, cx| {
-                            // Deleting reloads the list, and this runs inside the
-                            // list's own event dispatch; wait until it is done.
-                            let history = delete_history.clone();
-                            let id = delete_id.clone();
-                            let panel = state.delegate().panel.clone();
-                            window.defer(cx, move |_window, cx| {
-                                let _ = history.delete(id.clone());
-                                if let Some(panel) =
-                                    panel.as_ref().and_then(|panel| panel.upgrade())
-                                {
-                                    let _ = panel.update(cx, |panel, cx| panel.reload(cx));
-                                }
-                            });
-                        })),
-                )
+                        });
+                    }),
+                ))
+                .child(action_icon_button(
+                    SharedString::from(format!("act-{}-delete", item.id)),
+                    gpui_kit::assets::IconName::Trash,
+                    selected,
+                    cx.listener(move |state, _, window, cx| {
+                        let history = delete_history.clone();
+                        let id = delete_id.clone();
+                        let panel = state.delegate().panel.clone();
+                        cx.on_next_frame(window, move |_state, _window, cx| {
+                            let _ = history.delete(id.clone());
+                            if let Some(panel) = panel.as_ref().and_then(|panel| panel.upgrade()) {
+                                let _ = panel.update(cx, |panel, cx| panel.reload(cx));
+                            }
+                        });
+                    }),
+                ))
                 .into_any_element()
         } else if let Some(order) = self
             .checked
@@ -1648,8 +1648,15 @@ fn open_panel_at(cx: &mut App, anchor: Option<tray::TrayAnchor>) {
     // Fill the icon cache before the first frame: loading it from the deferred
     // step made the chips and row icons appear a beat after the text, which read
     // as the panel shifting.
+    // Warm only what the first frame shows; the rest is filled from the deferred
+    // step, so opening never waits for every icon in the history.
     if let Ok(items) = history().load_metadata() {
-        icons::preload(items.iter().filter_map(|item| item.application.as_deref()));
+        icons::preload(
+            items
+                .iter()
+                .take(20)
+                .filter_map(|item| item.application.as_deref()),
+        );
     }
     let bounds = panel_bounds(cx, panel, &settings, anchor);
     let (handle, _) = gpui_kit::open_window(
@@ -1890,97 +1897,102 @@ fn main() {
         Arc::new(HistoryManager::new(storage_path()).expect("open history database"));
     let _ = HISTORY.set(shared_history);
 
-    gpui_kit::application().run(move |cx: &mut App| {
-        gpui_kit::init(cx);
-        register_symbol_font(cx);
-        // Linux defaults to quitting when the last window closes, which would
-        // end the clipboard watcher every time the panel is dismissed. A
-        // resident app only quits when asked to.
-        cx.set_quit_mode(gpui::QuitMode::Explicit);
-        register_popup_hotkey();
+    gpui_kit::application()
+        // The rows draw their pin and delete buttons from the bundled SVG set;
+        // without an asset source the renderer has nothing to load and the window
+        // never comes up.
+        .with_assets(gpui_kit::assets::Assets::new(""))
+        .run(move |cx: &mut App| {
+            gpui_kit::init(cx);
+            register_symbol_font(cx);
+            // Linux defaults to quitting when the last window closes, which would
+            // end the clipboard watcher every time the panel is dismissed. A
+            // resident app only quits when asked to.
+            cx.set_quit_mode(gpui::QuitMode::Explicit);
+            register_popup_hotkey();
 
-        // The panel is created on demand, so its id has to be forgotten the
-        // moment the window really closes.
-        let closed = cx.on_window_closed(|_cx, id| {
-            if panel_window_id() == Some(id) {
-                set_panel_window(None);
-            }
-        });
-        std::mem::forget(closed);
-
-        // The tray only reports intent; the window handling stays here.
-        let (tray_tx, mut tray_rx) = futures::channel::mpsc::unbounded();
-        // `showInStatusBar == false` means the app lives only behind its shortcut.
-        let tray_settings = settings::Settings::load(&storage_path());
-        if tray_settings.show_in_status_bar {
-            tray::install(tray_tx, &tray_settings.menu_icon);
-        }
-
-        // A second launch asks this instance to toggle instead of starting up.
-        let (ipc_tx, mut ipc_rx) = futures::channel::mpsc::unbounded();
-        ipc::listen(&storage_path(), ipc_tx);
-
-        start_clipboard_capture(cx, history(), settings::Settings::load(&storage_path()));
-
-        if open_settings_at_launch {
-            open_settings(cx);
-        } else {
-            open_panel(cx);
-        }
-
-        // A resident app: the panel window comes and goes, the process keeps
-        // watching the shortcut, the tray menu and the clipboard.
-        cx.spawn(async move |cx| {
-            use global_hotkey::GlobalHotKeyEvent;
-            loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(120))
-                    .await;
-
-                while let Ok(command) = ipc_rx.try_recv() {
-                    eprintln!("[ipc] {command:?}");
-                    match command {
-                        ipc::IpcCommand::Toggle => cx.update(toggle_panel),
-                        ipc::IpcCommand::Pair(peer_id) => {
-                            sync_runtime::remember_pairing(&peer_id);
-                            history().sync_request_pairing(peer_id);
-                        }
-                        ipc::IpcCommand::Accept { peer_id, pin } => {
-                            history().sync_accept_pairing(peer_id, pin);
-                        }
-                        ipc::IpcCommand::Connect(address) => {
-                            history().sync_add_peer_address(address);
-                        }
-                    }
+            // The panel is created on demand, so its id has to be forgotten the
+            // moment the window really closes.
+            let closed = cx.on_window_closed(|_cx, id| {
+                if panel_window_id() == Some(id) {
+                    set_panel_window(None);
                 }
+            });
+            std::mem::forget(closed);
 
-                while let Ok(command) = tray_rx.try_recv() {
-                    match command {
-                        tray::TrayCommand::Toggle(anchor) => cx.update(|cx| {
-                            if let Some(anchor) = anchor {
-                                let mut settings = settings::Settings::load(&storage_path());
-                                if settings.status_item_x != Some(anchor.x as f32) {
-                                    settings.status_item_x = Some(anchor.x as f32);
-                                    settings.save(&storage_path());
-                                }
+            // The tray only reports intent; the window handling stays here.
+            let (tray_tx, mut tray_rx) = futures::channel::mpsc::unbounded();
+            // `showInStatusBar == false` means the app lives only behind its shortcut.
+            let tray_settings = settings::Settings::load(&storage_path());
+            if tray_settings.show_in_status_bar {
+                tray::install(tray_tx, &tray_settings.menu_icon);
+            }
+
+            // A second launch asks this instance to toggle instead of starting up.
+            let (ipc_tx, mut ipc_rx) = futures::channel::mpsc::unbounded();
+            ipc::listen(&storage_path(), ipc_tx);
+
+            start_clipboard_capture(cx, history(), settings::Settings::load(&storage_path()));
+
+            if open_settings_at_launch {
+                open_settings(cx);
+            } else {
+                open_panel(cx);
+            }
+
+            // A resident app: the panel window comes and goes, the process keeps
+            // watching the shortcut, the tray menu and the clipboard.
+            cx.spawn(async move |cx| {
+                use global_hotkey::GlobalHotKeyEvent;
+                loop {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(120))
+                        .await;
+
+                    while let Ok(command) = ipc_rx.try_recv() {
+                        eprintln!("[ipc] {command:?}");
+                        match command {
+                            ipc::IpcCommand::Toggle => cx.update(toggle_panel),
+                            ipc::IpcCommand::Pair(peer_id) => {
+                                sync_runtime::remember_pairing(&peer_id);
+                                history().sync_request_pairing(peer_id);
                             }
-                            toggle_panel_at(cx, anchor)
-                        }),
-                        tray::TrayCommand::Open => cx.update(open_panel_if_needed),
-                        tray::TrayCommand::Settings => cx.update(open_settings),
-                        tray::TrayCommand::Quit => cx.update(|cx| cx.quit()),
+                            ipc::IpcCommand::Accept { peer_id, pin } => {
+                                history().sync_accept_pairing(peer_id, pin);
+                            }
+                            ipc::IpcCommand::Connect(address) => {
+                                history().sync_add_peer_address(address);
+                            }
+                        }
+                    }
+
+                    while let Ok(command) = tray_rx.try_recv() {
+                        match command {
+                            tray::TrayCommand::Toggle(anchor) => cx.update(|cx| {
+                                if let Some(anchor) = anchor {
+                                    let mut settings = settings::Settings::load(&storage_path());
+                                    if settings.status_item_x != Some(anchor.x as f32) {
+                                        settings.status_item_x = Some(anchor.x as f32);
+                                        settings.save(&storage_path());
+                                    }
+                                }
+                                toggle_panel_at(cx, anchor)
+                            }),
+                            tray::TrayCommand::Open => cx.update(open_panel_if_needed),
+                            tray::TrayCommand::Settings => cx.update(open_settings),
+                            tray::TrayCommand::Quit => cx.update(|cx| cx.quit()),
+                        }
+                    }
+
+                    while GlobalHotKeyEvent::receiver().try_recv().is_ok() {
+                        cx.update(open_panel_if_needed);
                     }
                 }
+            })
+            .detach();
 
-                while GlobalHotKeyEvent::receiver().try_recv().is_ok() {
-                    cx.update(open_panel_if_needed);
-                }
-            }
-        })
-        .detach();
-
-        cx.activate(true);
-    });
+            cx.activate(true);
+        });
 }
 
 /// Which application owns the copy, when the platform can say.
@@ -2098,4 +2110,40 @@ fn start_clipboard_capture(cx: &mut App, history: Arc<HistoryManager>, settings:
         }
     })
     .detach();
+}
+
+/// A small icon button for the row's trailing actions.
+fn action_icon_button(
+    id: SharedString,
+    icon: gpui_kit::assets::IconName,
+    on_accent: bool,
+    handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+) -> AnyElement {
+    let tint = if on_accent {
+        gpui::white().opacity(0.9)
+    } else {
+        gpui::black().opacity(0.55)
+    };
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(18.0))
+        .rounded(px(3.0))
+        .cursor_pointer()
+        .hover(move |style| {
+            style.bg(if on_accent {
+                gpui::white().opacity(0.18)
+            } else {
+                gpui::black().opacity(0.08)
+            })
+        })
+        .child(
+            gpui_kit::component::Icon::new(icon)
+                .xsmall()
+                .text_color(tint),
+        )
+        .on_click(handler)
+        .into_any_element()
 }

@@ -219,9 +219,24 @@ mod macos {
         let png =
             unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &empty) }?;
         let bytes = png.to_vec();
-        // Decoding through the `image` crate keeps the pixel-format handling in
-        // one place instead of duplicating it against AppKit.
-        let decoded = image::load_from_memory(&bytes).ok()?.to_rgba8();
+        // AppKit hands back the artwork at its native size, often 1024 px. Shrinking
+        // that in one pass to 15 px samples far too few pixels and the icons turn
+        // to mush, so halve repeatedly with a good filter first.
+        let mut decoded = image::load_from_memory(&bytes).ok()?;
+        if decoded.width() > 64 {
+            // A box filter down to 128 px is cheap and averages every source
+            // pixel; one Lanczos pass then finishes at 64. Repeated Lanczos
+            // passes looked fine but took seconds across a whole menu bar.
+            decoded = decoded.thumbnail(128, 128);
+            if decoded.width() > 64 {
+                let scale = 64.0 / f64::from(decoded.width());
+                let width = 64u32;
+                let height = (f64::from(decoded.height()) * scale).round().max(1.0) as u32;
+                decoded =
+                    decoded.resize_exact(width, height, image::imageops::FilterType::Lanczos3);
+            }
+        }
+        let decoded = decoded.to_rgba8();
         let (width, height) = decoded.dimensions();
         let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> =
             ImageBuffer::from_raw(width, height, decoded.into_raw())?;

@@ -171,8 +171,10 @@ impl HistoryPanel {
             sync_runtime::SyncNotice::Error(message) => {
                 eprintln!("sync error: {message}");
             }
-            // Peer and pairing events are surfaced in the settings window.
-            _ => {}
+            // A pairing request needs the user to compare a code, and nothing on
+            // the panel can show it, so the window that can is brought forward.
+            sync_runtime::SyncNotice::PairingRequest { .. } => open_settings(cx),
+            sync_runtime::SyncNotice::PeersChanged => {}
         }
     }
 

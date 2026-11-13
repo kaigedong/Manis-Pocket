@@ -15,6 +15,7 @@ mod icons;
 mod ignore;
 mod ipc;
 mod panel;
+mod peers;
 mod placement;
 mod rows;
 mod settings;
@@ -170,6 +171,15 @@ fn exit_after(delivered: bool) {
 
 /// Opens the settings window.
 fn open_settings(cx: &mut App) {
+    if let Some(id) = settings_window_id() {
+        for handle in cx.windows() {
+            if handle.window_id() == id {
+                let _ = handle.update(cx, |_, window, _| window.activate_window());
+                cx.activate(true);
+                return;
+            }
+        }
+    }
     let bounds = Bounds::centered(None, size(px(720.0), px(520.0)), cx);
     let database = storage_path();
     let opened = gpui_kit::open_window(
@@ -189,8 +199,18 @@ fn open_settings(cx: &mut App) {
             cx.new(|cx| settings_ui::SettingsView::new(database, history, window, cx))
         },
     );
-    if let Err(error) = opened {
-        eprintln!("could not open the settings window: {error}");
+    match opened {
+        Ok((handle, _)) => {
+            set_settings_window(Some(handle.window_id()));
+            let closed = cx.on_window_closed(|_cx, id| {
+                if settings_window_id() == Some(id) {
+                    set_settings_window(None);
+                }
+            });
+            std::mem::forget(closed);
+            cx.activate(true);
+        }
+        Err(error) => eprintln!("could not open the settings window: {error}"),
     }
 }
 
@@ -242,6 +262,19 @@ fn legacy_swiftdata_path() -> Option<String> {
 /// panel can never be opened again. The id is cleared by the window-closed
 /// observer, which is the only reliable signal.
 static PANEL_WINDOW: std::sync::Mutex<Option<gpui::WindowId>> = std::sync::Mutex::new(None);
+/// The settings window, so asking for it twice focuses the first one instead of
+/// stacking copies — a pairing request can arrive while it is already open.
+static SETTINGS_WINDOW: std::sync::Mutex<Option<gpui::WindowId>> = std::sync::Mutex::new(None);
+
+fn settings_window_id() -> Option<gpui::WindowId> {
+    SETTINGS_WINDOW.lock().ok().and_then(|guard| *guard)
+}
+
+fn set_settings_window(id: Option<gpui::WindowId>) {
+    if let Ok(mut guard) = SETTINGS_WINDOW.lock() {
+        *guard = id;
+    }
+}
 
 fn panel_window_id() -> Option<gpui::WindowId> {
     PANEL_WINDOW.lock().ok().and_then(|guard| *guard)

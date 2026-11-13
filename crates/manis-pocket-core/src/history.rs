@@ -551,6 +551,17 @@ impl HistoryManager {
         }
     }
 
+    /// Forget a device: tell the running engine to drop it and delete the record,
+    /// so a later start does not resurrect it from the database.
+    pub fn unpair(&self, peer_id: String) {
+        if let Ok(guard) = self.sync_engine.lock()
+            && let Some(engine) = guard.as_ref()
+        {
+            engine.unpair(&peer_id);
+        }
+        self.remove_paired_peer(peer_id);
+    }
+
     /// Remove a paired peer.
     pub fn remove_paired_peer(&self, peer_id: String) {
         match self.storage.lock() {

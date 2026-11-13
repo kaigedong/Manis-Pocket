@@ -9,6 +9,8 @@ name = "manis-pocket"
 path = "src/main.rs"
 
 [dependencies]
+# Parsing the core's peer list and the legacy history file.
+serde_json = "1"
 gpui-kit = "0.9.1"
 manis-pocket-core = { path = "../manis-pocket-core" }
 dirs = "6"

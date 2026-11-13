@@ -33,6 +33,70 @@ pub enum SyncNotice {
     Error(String),
 }
 
+/// A device seen on the local network, paired or not.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DiscoveredPeer {
+    pub(crate) peer_id: String,
+    pub(crate) display_name: String,
+    pub(crate) is_connected: bool,
+}
+
+/// A pairing request waiting for the user to compare the code and answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PendingPairing {
+    pub(crate) peer_id: String,
+    pub(crate) display_name: String,
+    pub(crate) pin: String,
+}
+
+/// What mDNS has reported since launch. Replaced wholesale on every update so the
+/// UI always sees a consistent snapshot.
+static DISCOVERED: Mutex<Vec<DiscoveredPeer>> = Mutex::new(Vec::new());
+/// Pairing requests nobody has answered yet.
+static PENDING: Mutex<Vec<PendingPairing>> = Mutex::new(Vec::new());
+
+/// The devices currently visible on the network.
+pub(crate) fn discovered_peers() -> Vec<DiscoveredPeer> {
+    DISCOVERED
+        .lock()
+        .map(|peers| peers.clone())
+        .unwrap_or_default()
+}
+
+/// The pairing requests waiting for an answer.
+pub(crate) fn pending_pairings() -> Vec<PendingPairing> {
+    PENDING.lock().map(|list| list.clone()).unwrap_or_default()
+}
+
+/// Drops a pairing request once it has been accepted or rejected.
+pub(crate) fn forget_pairing(peer_id: &str) {
+    if let Ok(mut list) = PENDING.lock() {
+        list.retain(|pending| pending.peer_id != peer_id);
+    }
+}
+
+/// Records a discovered peer. `upsert` keeps the display name and connection state
+/// of a device that mDNS reports repeatedly.
+fn remember_discovered(peer: DiscoveredPeer) {
+    if let Ok(mut peers) = DISCOVERED.lock() {
+        match peers.iter_mut().find(|known| known.peer_id == peer.peer_id) {
+            Some(known) => {
+                if !peer.display_name.is_empty() {
+                    known.display_name = peer.display_name;
+                }
+                known.is_connected = peer.is_connected;
+            }
+            None => peers.push(peer),
+        }
+    }
+}
+
+fn forget_discovered(peer_id: &str) {
+    if let Ok(mut peers) = DISCOVERED.lock() {
+        peers.retain(|peer| peer.peer_id != peer_id);
+    }
+}
+
 /// Peers this instance asked to pair with.
 ///
 /// The protocol needs an explicit confirmation from *both* sides. A user who
@@ -137,16 +201,22 @@ impl ClipboardObserver for AppObserver {
         is_connected: bool,
     ) {
         // Pairing is driven by peer id, which is the one thing a terminal needs
-        // to see, so it is printed rather than only shown in the UI.
+        // to see, so it is printed as well as shown in the settings window.
         eprintln!(
             "[sync] peer {display_name} ({peer_id}) connected={is_connected} addrs={}",
             addresses.join(",")
         );
+        remember_discovered(DiscoveredPeer {
+            peer_id,
+            display_name,
+            is_connected,
+        });
         self.notify(SyncNotice::PeersChanged);
     }
 
     fn on_peer_lost(&self, peer_id: String) {
         eprintln!("[sync] peer lost: {peer_id}");
+        forget_discovered(&peer_id);
         self.notify(SyncNotice::PeersChanged);
     }
 
@@ -158,6 +228,15 @@ impl ClipboardObserver for AppObserver {
             self.history
                 .sync_accept_pairing(peer_id.clone(), pin.clone());
             eprintln!("[sync] auto-confirmed our side of the pairing with {peer_id}");
+        }
+        if let Ok(mut list) = PENDING.lock()
+            && !list.iter().any(|pending| pending.peer_id == peer_id)
+        {
+            list.push(PendingPairing {
+                peer_id: peer_id.clone(),
+                display_name: display_name.clone(),
+                pin: pin.clone(),
+            });
         }
         self.notify(SyncNotice::PairingRequest {
             peer_id,
@@ -309,5 +388,52 @@ mod tests {
             }
             other => panic!("unexpected notice: {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_discovered_peer_is_listed_once_and_updates_its_state() {
+        let peer_id = "test-peer-once";
+        remember_discovered(DiscoveredPeer {
+            peer_id: peer_id.into(),
+            display_name: String::new(),
+            is_connected: false,
+        });
+        remember_discovered(DiscoveredPeer {
+            peer_id: peer_id.into(),
+            display_name: "Pixel".into(),
+            is_connected: true,
+        });
+        let listed: Vec<DiscoveredPeer> = discovered_peers()
+            .into_iter()
+            .filter(|peer| peer.peer_id == peer_id)
+            .collect();
+        assert_eq!(listed.len(), 1, "mDNS reports a peer repeatedly");
+        assert_eq!(listed[0].display_name, "Pixel");
+        assert!(listed[0].is_connected);
+
+        forget_discovered(peer_id);
+        assert!(
+            discovered_peers()
+                .iter()
+                .all(|peer| peer.peer_id != peer_id)
+        );
+    }
+
+    #[test]
+    fn a_pairing_request_stays_until_it_is_answered() {
+        let peer_id = "test-peer-pairing";
+        if let Ok(mut list) = PENDING.lock() {
+            list.push(PendingPairing {
+                peer_id: peer_id.into(),
+                display_name: "Phone".into(),
+                pin: "123456".into(),
+            });
+        }
+        forget_pairing(peer_id);
+        assert!(
+            pending_pairings()
+                .iter()
+                .all(|pending| pending.peer_id != peer_id)
+        );
     }
 }

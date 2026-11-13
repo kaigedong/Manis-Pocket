@@ -620,14 +620,187 @@ impl SettingsView {
                     "本机设备名：{}",
                     self.settings.sync_device_name
                 )));
-                let peers = self.history.get_paired_peers();
-                rows.push(note(format!("已配对设备 {} 台", peers.len())));
-                for peer in &peers {
+                // A pairing request is the one place a user has to act on a code,
+                // so it comes first and states the number plainly.
+                for pending in crate::sync_runtime::pending_pairings() {
+                    let accept_id = SharedString::from(format!("accept-{}", pending.peer_id));
+                    let reject_id = SharedString::from(format!("reject-{}", pending.peer_id));
+                    let accept_peer = pending.peer_id.clone();
+                    let accept_pin = pending.pin.clone();
+                    let reject_peer = pending.peer_id.clone();
+                    let accept_history = self.history.clone();
+                    let reject_history = self.history.clone();
                     rows.push(
                         div()
-                            .text_xs()
-                            .text_color(gpui::black().opacity(0.55))
-                            .child(peer.clone())
+                            .w_full()
+                            .p_2()
+                            .rounded(px(6.0))
+                            .bg(gpui::rgb(0x0A84FF).opacity(0.08))
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(div().text_sm().child(format!(
+                                        "{} 请求配对",
+                                        if pending.display_name.is_empty() {
+                                            pending.peer_id.clone()
+                                        } else {
+                                            pending.display_name.clone()
+                                        }
+                                    )))
+                                    .child(
+                                        div()
+                                            .text_xl()
+                                            .text_color(gpui::rgb(0x0A84FF))
+                                            .child(pending.pin.clone()),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .id(accept_id)
+                                                    .px_2()
+                                                    .py_0p5()
+                                                    .rounded(px(4.0))
+                                                    .bg(gpui::rgb(0x0A84FF))
+                                                    .text_color(gpui::white())
+                                                    .text_xs()
+                                                    .cursor_pointer()
+                                                    .child("接受")
+                                                    .on_click(cx.listener(move |_, _, _, cx| {
+                                                        accept_history.sync_accept_pairing(
+                                                            accept_peer.clone(),
+                                                            accept_pin.clone(),
+                                                        );
+                                                        crate::sync_runtime::forget_pairing(
+                                                            &accept_peer,
+                                                        );
+                                                        cx.notify();
+                                                    })),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id(reject_id)
+                                                    .px_2()
+                                                    .py_0p5()
+                                                    .rounded(px(4.0))
+                                                    .bg(gpui::black().opacity(0.06))
+                                                    .text_xs()
+                                                    .cursor_pointer()
+                                                    .child("拒绝")
+                                                    .on_click(cx.listener(move |_, _, _, cx| {
+                                                        reject_history.sync_reject_pairing(
+                                                            reject_peer.clone(),
+                                                        );
+                                                        crate::sync_runtime::forget_pairing(
+                                                            &reject_peer,
+                                                        );
+                                                        cx.notify();
+                                                    })),
+                                            ),
+                                    ),
+                            )
+                            .into_any_element(),
+                    );
+                }
+
+                let peers: Vec<crate::peers::PairedPeer> = self
+                    .history
+                    .get_paired_peers()
+                    .iter()
+                    .filter_map(|line| crate::peers::PairedPeer::from_json(line))
+                    .collect();
+                rows.push(note(format!("已配对设备 {} 台", peers.len())));
+                for peer in peers {
+                    let peer_id = peer.peer_id.clone();
+                    let button_id = SharedString::from(format!("unpair-{}", peer.peer_id));
+                    let history = self.history.clone();
+                    rows.push(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .items_center()
+                            .py_1()
+                            .child(
+                                v_flex().child(div().text_sm().child(peer.label())).child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(gpui::black().opacity(0.45))
+                                        .child(peer.detail()),
+                                ),
+                            )
+                            .child(
+                                div()
+                                    .id(button_id)
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded(px(4.0))
+                                    .bg(gpui::black().opacity(0.06))
+                                    .text_xs()
+                                    .cursor_pointer()
+                                    .child("解除配对")
+                                    .on_click(cx.listener(move |_this, _, _, cx| {
+                                        history.unpair(peer_id.clone());
+                                        cx.notify();
+                                    })),
+                            )
+                            .into_any_element(),
+                    );
+                }
+                // Devices found on the network that are not paired yet.
+                let paired: Vec<String> = self
+                    .history
+                    .get_paired_peers()
+                    .iter()
+                    .filter_map(|line| crate::peers::PairedPeer::from_json(line))
+                    .map(|peer| peer.peer_id)
+                    .collect();
+                let candidates: Vec<crate::sync_runtime::DiscoveredPeer> =
+                    crate::sync_runtime::discovered_peers()
+                        .into_iter()
+                        .filter(|peer| !paired.contains(&peer.peer_id))
+                        .collect();
+                rows.push(note(format!("发现的设备 {} 台", candidates.len())));
+                for candidate in candidates {
+                    let pair_id = SharedString::from(format!("pair-{}", candidate.peer_id));
+                    let pair_peer = candidate.peer_id.clone();
+                    let pair_history = self.history.clone();
+                    let name = if candidate.display_name.is_empty() {
+                        crate::peers::short_peer_id(&candidate.peer_id)
+                    } else {
+                        candidate.display_name.clone()
+                    };
+                    rows.push(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .items_center()
+                            .py_1()
+                            .child(
+                                v_flex().child(div().text_sm().child(name)).child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(gpui::black().opacity(0.45))
+                                        .child(crate::peers::short_peer_id(&candidate.peer_id)),
+                                ),
+                            )
+                            .child(
+                                div()
+                                    .id(pair_id)
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded(px(4.0))
+                                    .bg(gpui::rgb(0x0A84FF))
+                                    .text_color(gpui::white())
+                                    .text_xs()
+                                    .cursor_pointer()
+                                    .child("配对")
+                                    .on_click(cx.listener(move |_, _, _, cx| {
+                                        crate::sync_runtime::remember_pairing(&pair_peer);
+                                        pair_history.sync_request_pairing(pair_peer.clone());
+                                        cx.notify();
+                                    })),
+                            )
                             .into_any_element(),
                     );
                 }

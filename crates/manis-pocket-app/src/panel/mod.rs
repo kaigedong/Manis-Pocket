@@ -58,6 +58,10 @@ impl HistoryPanel {
         // The newest history entry, skipping the pinned block on top.
         let default_row = rows::default_row(arranged.items.len(), arranged.pinned_count);
         let default_id = arranged.items.get(default_row).map(|item| item.id.clone());
+        // The footer counts what the list shows. `refresh` keeps this current, but
+        // it only runs when the query or the history changes, so the first paint
+        // has to start from the entries the panel was built with.
+        let visible_count = arranged.items.len();
         let panel_handle = cx.entity().downgrade();
         let list = cx.new(|cx| {
             ListState::new(
@@ -152,7 +156,7 @@ impl HistoryPanel {
                 })
                 .unwrap_or_default(),
             confirm_clear_all: false,
-            visible_count: 0,
+            visible_count,
             selected_id: default_id,
             preview_images: std::collections::HashMap::new(),
         }

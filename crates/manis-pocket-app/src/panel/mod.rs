@@ -943,9 +943,11 @@ pub(crate) fn copy_entry_to_clipboard(history: &HistoryManager, id: &str) -> boo
     else {
         return false;
     };
-    arboard::Clipboard::new()
-        .and_then(|mut clipboard| clipboard.set_text(text))
-        .is_ok()
+    // Not `arboard`: on Wayland only the focused client may own the selection and
+    // the panel's process is often not focused, so the write silently failed and
+    // clicking a row did nothing. `write_text` goes through `wl-copy`, the same
+    // helper the sync engine uses.
+    crate::clipboard::write_text(&text)
 }
 
 #[cfg(test)]

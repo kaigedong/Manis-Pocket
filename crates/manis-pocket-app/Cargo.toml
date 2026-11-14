@@ -16,7 +16,6 @@ manis-pocket-core = { path = "../manis-pocket-core" }
 dirs = "6"
 chrono = "0.4"
 log = "0.4"
-arboard = "3"
 futures = "0.3"
 uuid = { version = "1", features = ["v4"] }
 global-hotkey = "0.10.0"
@@ -29,6 +28,9 @@ regex = "1.13.1"
 ksni = { version = "0.3.7", features = ["blocking"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# The pasteboard is AppKit's; Wayland goes through wl-clipboard instead, so this
+# is only needed on macOS.
+arboard = "3"
 tray-icon = "0.26.1"
 objc2-app-kit = { version = "0.3", features = [
     "NSApplication",

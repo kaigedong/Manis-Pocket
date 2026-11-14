@@ -678,7 +678,10 @@ fn main() {
         // The rows draw their pin and delete buttons from the bundled SVG set;
         // without an asset source the renderer has nothing to load and the window
         // never comes up.
-        .with_assets(gpui_kit::assets::Assets::new(""))
+        // The full catalog, not the curated `Assets` bundle: the row actions use
+        // pin/pin-off/trash, which the curated set leaves out, and a missing icon
+        // silently renders as an empty button.
+        .with_assets(gpui_kit::assets::AllAssets::new(""))
         .run(move |cx: &mut App| {
             gpui_kit::init(cx);
             register_symbol_font(cx);
@@ -894,6 +897,25 @@ fn start_clipboard_capture(cx: &mut App, history: Arc<HistoryManager>, database:
         }
     })
     .detach();
+}
+
+#[cfg(test)]
+mod asset_tests {
+    use gpui_kit::AssetSource;
+
+    /// The row's hover actions are Lucide icons resolved through the registered
+    /// asset source; the curated `Assets` bundle does not carry them, so the
+    /// buttons used to render blank.
+    #[test]
+    fn the_row_actions_have_icons() {
+        let assets = gpui_kit::assets::AllAssets::new("");
+        for path in ["icons/pin.svg", "icons/pin-off.svg", "icons/trash.svg"] {
+            assert!(
+                assets.load(path).is_ok(),
+                "{path} is missing from the registered asset source"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

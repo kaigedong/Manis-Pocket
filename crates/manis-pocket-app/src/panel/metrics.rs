@@ -21,7 +21,8 @@ pub(crate) const ICON_SIZE: f32 = 15.0;
 pub(crate) const SELECTION_ACCENT: u32 = 0x0A84FF;
 /// Measured chrome around the list: the search row and the footer.
 pub(crate) const HEADER_HEIGHT: f32 = 44.0;
-pub(crate) const FOOTER_HEIGHT: f32 = 122.0;
+/// The separator plus three rows (settings, about, quit).
+pub(crate) const FOOTER_HEIGHT: f32 = 74.0;
 
 /// Character budget standing in for `truncationMode(.middle)`.
 pub(crate) const TITLE_BUDGET: usize = 28;

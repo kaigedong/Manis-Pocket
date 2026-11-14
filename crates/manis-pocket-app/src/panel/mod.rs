@@ -29,7 +29,6 @@ pub(crate) struct HistoryPanel {
     /// Decoded preview images, keyed by entry id: decoding a PNG on every frame
     /// would make the panel stutter on large screenshots.
     /// Set while the footer's "clear everything" is waiting for a second click.
-    confirm_clear_all: bool,
     /// How many rows the list is showing, mirrored so the render never has to
     /// read the list entity.
     visible_count: usize,
@@ -155,7 +154,6 @@ impl HistoryPanel {
                         .collect()
                 })
                 .unwrap_or_default(),
-            confirm_clear_all: false,
             visible_count,
             selected_id: default_id,
             preview_images: std::collections::HashMap::new(),
@@ -310,7 +308,6 @@ impl HistoryPanel {
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.confirm_clear_all = false;
         // The image cache is filled from the current selection, so refresh it
         // whenever the list content changes.
         let query = self.input.read(cx).value().to_string();
@@ -609,7 +606,9 @@ impl HistoryPanel {
         Some(bar.into_any_element())
     }
 
-    /// The action footer: the same five rows the macOS build puts under the list.
+    /// The action footer: the rows the macOS build puts under the list, minus the
+    /// two that emptied the history — deleting everything from a menu one misclick
+    /// away was not worth the shortcut.
     fn render_footer(&self, cx: &mut Context<Self>) -> AnyElement {
         // The rows carry the action and nothing else: the shortcuts still work,
         // but printing them here made a menu look like a cheat sheet.
@@ -634,32 +633,6 @@ impl HistoryPanel {
                     .mb_1p5()
                     .h(px(1.0))
                     .bg(gpui::black().opacity(0.08)),
-            )
-            .child(
-                row("footer-clear", "清除").on_click(cx.listener(|this, _, _, cx| {
-                    let _ = this.history.clear_unpinned();
-                    this.reload(cx);
-                })),
-            )
-            .child(
-                row(
-                    "footer-clear-all",
-                    if self.confirm_clear_all {
-                        "再点一次确认"
-                    } else {
-                        "全部清除"
-                    },
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    if !clear_all_armed(&mut this.confirm_clear_all) {
-                        // Arming only lasts while the panel stays as it is; anything
-                        // that reloads it disarms again.
-                        cx.notify();
-                        return;
-                    }
-                    let _ = this.history.clear_all();
-                    this.reload(cx);
-                })),
             )
             .child(row("footer-preferences", "偏好设置…").on_click(cx.listener(
                 |_, _, window, cx| {
@@ -794,20 +767,6 @@ impl Render for HistoryPanel {
                 } else if modifiers.control && key == "space" {
                     // ⌃Space toggles the preview (`KeyboardShortcuts_togglePreview`).
                     this.toggle_preview(cx);
-                } else if key == "backspace" && modifiers.platform && modifiers.alt {
-                    // ⌥⌘⌫ clears unpinned, ⇧⌥⌘⌫ clears everything — and the latter
-                    // asks once, exactly like the footer item does.
-                    if modifiers.shift {
-                        if clear_all_armed(&mut this.confirm_clear_all) {
-                            let _ = this.history.clear_all();
-                            this.reload(cx);
-                        } else {
-                            cx.notify();
-                        }
-                    } else {
-                        let _ = this.history.clear_unpinned();
-                        this.reload(cx);
-                    }
                 } else if modifiers.platform && key == "," {
                     open_settings(cx);
                 } else if modifiers.platform && key == "q" {
@@ -899,12 +858,6 @@ impl Render for HistoryPanel {
 
 /// Two-step confirmation for the one action that destroys everything: the first
 /// click arms it, the second clears. Returns whether this click should clear.
-fn clear_all_armed(armed: &mut bool) -> bool {
-    let was_armed = *armed;
-    *armed = !was_armed;
-    was_armed
-}
-
 /// Maps the `searchMode` setting onto the core's search mode.
 fn search_mode(value: &str) -> SearchMode {
     match value {
@@ -959,26 +912,4 @@ pub(crate) fn copy_entry_to_clipboard(history: &HistoryManager, id: &str) -> boo
     // clicking a row did nothing. `write_text` goes through `wl-copy`, the same
     // helper the sync engine uses.
     crate::clipboard::write_text(&text)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::clear_all_armed;
-
-    #[test]
-    fn clearing_everything_needs_two_clicks() {
-        let mut armed = false;
-        assert!(!clear_all_armed(&mut armed), "the first click only arms");
-        assert!(armed);
-        assert!(clear_all_armed(&mut armed), "the second click clears");
-        assert!(!armed, "and the confirmation is spent");
-    }
-
-    #[test]
-    fn a_spent_confirmation_arms_again() {
-        let mut armed = false;
-        let _ = clear_all_armed(&mut armed);
-        let _ = clear_all_armed(&mut armed);
-        assert!(!clear_all_armed(&mut armed), "a third click must not clear");
-    }
 }

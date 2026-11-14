@@ -55,16 +55,18 @@ impl HistoryPanel {
             cx.new(|cx| InputState::new(window, cx).placeholder(SharedString::from("搜索")));
         let pins_position = settings.pins_position.clone();
         let arranged = rows::arrange(all_items.clone(), &pins_position, &settings.sort_by);
+        // The newest history entry, skipping the pinned block on top.
+        let default_row = rows::default_row(arranged.items.len(), arranged.pinned_count);
+        let default_id = arranged.items.get(default_row).map(|item| item.id.clone());
         let panel_handle = cx.entity().downgrade();
         let list = cx.new(|cx| {
             ListState::new(
                 HistoryList {
                     items: arranged.items,
                     pinned_count: arranged.pinned_count,
-                    // The macOS panel highlights the newest entry on open.
                     selected: Some(IndexPath {
                         section: 0,
-                        row: 0,
+                        row: default_row,
                         column: 0,
                     }),
                     history: history.clone(),
@@ -151,7 +153,7 @@ impl HistoryPanel {
                 .unwrap_or_default(),
             confirm_clear_all: false,
             visible_count: 0,
-            selected_id: None,
+            selected_id: default_id,
             preview_images: std::collections::HashMap::new(),
         }
     }
@@ -346,17 +348,19 @@ impl HistoryPanel {
         // Keep the panel's own view of the list: the render and the selection
         // resolve against these instead of reading the list entity.
         self.visible_count = items.len();
-        self.selected_id = items.first().map(|item| item.id.clone());
-        self.list.update(cx, |state, cx| {
+        self.selected_id = self.list.update(cx, |state, cx| {
             let delegate = state.delegate_mut();
             delegate.highlights = highlights;
             delegate.replace_items(items, &pins_position, &sort_by);
+            // Open on the newest history entry rather than the pinned block.
+            let row = rows::default_row(delegate.items.len(), delegate.pinned_count);
             delegate.selected = Some(IndexPath {
                 section: 0,
-                row: 0,
+                row,
                 column: 0,
             });
             cx.notify();
+            delegate.items.get(row).map(|item| item.id.clone())
         });
     }
 }

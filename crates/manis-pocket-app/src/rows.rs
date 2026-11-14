@@ -323,6 +323,20 @@ pub fn arrange(items: Vec<ClipboardItem>, pins_position: &str, sort_by: &str) ->
     }
 }
 
+/// Row the panel highlights when it opens.
+///
+/// The pinned block sits above the history, and opening on a pinned entry means
+/// the newest thing copied is not what the user is looking at. Falls back to the
+/// first row when everything in the list happens to be pinned (or there is
+/// nothing pinned at all).
+pub fn default_row(item_count: usize, pinned_count: usize) -> usize {
+    if pinned_count > 0 && pinned_count < item_count {
+        pinned_count
+    } else {
+        0
+    }
+}
+
 /// Lines shown in the hover/preview sidebar for one entry.
 ///
 /// The macOS preview shows the full text, where it came from and when; the same
@@ -741,7 +755,24 @@ pub fn next_row(current: Option<usize>, delta: isize, count: usize) -> Option<us
 
 #[cfg(test)]
 mod navigation_tests {
-    use super::next_row;
+    use super::{default_row, next_row};
+
+    /// Opening the panel highlights the newest history entry, not a pinned one.
+    #[test]
+    fn opening_skips_the_pinned_block() {
+        assert_eq!(default_row(5, 0), 0, "nothing pinned: the first row");
+        assert_eq!(
+            default_row(5, 2),
+            2,
+            "two pinned rows sit above the history"
+        );
+        assert_eq!(
+            default_row(2, 2),
+            0,
+            "everything pinned: fall back to the top"
+        );
+        assert_eq!(default_row(0, 0), 0, "empty list");
+    }
 
     #[test]
     fn one_step_moves_one_row() {

@@ -235,6 +235,12 @@ impl HistoryPanel {
             cx.notify();
         });
         cx.notify();
+        // The frame that was already in flight when the key arrived can still be
+        // built from the previous selection, and on Wayland that frame is the one
+        // that stays on screen: the row that lost the highlight keeps its left
+        // corner painted. Asking for one more frame, drawn from a settled state,
+        // repaints the row that just changed colour.
+        cx.on_next_frame(window, |_panel, _window, cx| cx.notify());
     }
 
     /// Copies what the user is pointing at: the highlighted row, or the first one.
@@ -856,8 +862,6 @@ impl Render for HistoryPanel {
     }
 }
 
-/// Two-step confirmation for the one action that destroys everything: the first
-/// click arms it, the second clears. Returns whether this click should clear.
 /// Maps the `searchMode` setting onto the core's search mode.
 fn search_mode(value: &str) -> SearchMode {
     match value {

@@ -26,6 +26,10 @@ regex = "1.13.1"
 [target.'cfg(target_os = "linux")'.dependencies]
 # A pure D-Bus status notifier: no GTK anywhere in the Linux build.
 ksni = { version = "0.3.7", features = ["blocking"] }
+# Icon themes ship app icons as SVG as often as PNG; the row needs pixels either
+# way. Both crates are already in the tree through gpui, so this costs no new
+# downloads.
+resvg = "0.46"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # The pasteboard is AppKit's; Wayland goes through wl-clipboard instead, so this

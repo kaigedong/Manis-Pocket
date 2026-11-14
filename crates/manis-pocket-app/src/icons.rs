@@ -152,16 +152,6 @@ pub fn write_png_to_pasteboard(bytes: &[u8]) -> bool {
         .unwrap_or(false)
 }
 
-/// Shows the system About panel, like the SwiftUI footer's "About" row.
-#[cfg(target_os = "macos")]
-pub fn show_about_panel() {
-    let Some(main_thread) = objc2::MainThreadMarker::new() else {
-        return;
-    };
-    let application = objc2_app_kit::NSApplication::sharedApplication(main_thread);
-    unsafe { application.orderFrontStandardAboutPanel(None) };
-}
-
 /// Bundle identifier of the frontmost application.
 ///
 /// The macOS build records this with every copy, which is what lets a row show

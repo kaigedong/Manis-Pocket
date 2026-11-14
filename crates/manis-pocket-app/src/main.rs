@@ -8,6 +8,7 @@
 // objc2 has made the individual call safe; the lint would flag every one of them.
 #![allow(unused_unsafe)]
 
+mod about;
 #[cfg(target_os = "linux")]
 mod apps_linux;
 mod clipboard;
@@ -211,6 +212,77 @@ fn open_settings(cx: &mut App) {
             cx.activate(true);
         }
         Err(error) => eprintln!("could not open the settings window: {error}"),
+    }
+}
+
+/// Id of the About window while it exists, so clicking the footer item twice
+/// focuses the version instead of stacking copies of it.
+static ABOUT_WINDOW: std::sync::Mutex<Option<gpui::WindowId>> = std::sync::Mutex::new(None);
+
+fn about_window_id() -> Option<gpui::WindowId> {
+    ABOUT_WINDOW.lock().ok().and_then(|guard| *guard)
+}
+
+fn set_about_window(id: Option<gpui::WindowId>) {
+    if let Ok(mut guard) = ABOUT_WINDOW.lock() {
+        *guard = id;
+    }
+}
+
+/// Opens the About window.
+///
+/// macOS used to answer the footer item with the system About panel and Linux with
+/// a browser pointed at the project page; neither said which version was running,
+/// which is the question About exists to answer. The window draws the version
+/// `build.rs` baked into this binary, on both platforms.
+fn open_about(cx: &mut App) {
+    if let Some(id) = about_window_id() {
+        for handle in cx.windows() {
+            if handle.window_id() == id {
+                let _ = handle.update(cx, |_, window, _| window.activate_window());
+                cx.activate(true);
+                return;
+            }
+        }
+        // The window is gone but its id was not cleared; forget it and start over.
+        set_about_window(None);
+    }
+    let bounds = Bounds::centered(None, size(px(440.0), px(300.0)), cx);
+    let opened = gpui_kit::open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            // The same shape as the history panel: a dialog-sized floating window
+            // whose background is transparent, with the visible content drawn as a
+            // card. A tiling compositor that stretches the window then shows a
+            // card on the desktop rather than a half-screen white slab.
+            kind: WindowKind::Floating,
+            window_background: WindowBackgroundAppearance::Transparent,
+            titlebar: Some(TitlebarOptions {
+                title: Some(SharedString::from("关于 Manis Pocket")),
+                appears_transparent: true,
+                traffic_light_position: Some(point(px(-100.0), px(-100.0))),
+            }),
+            app_id: Some("io.github.kaigedong.ManisPocket".to_string()),
+            is_resizable: false,
+            is_movable: false,
+            is_minimizable: false,
+            ..Default::default()
+        },
+        cx,
+        |_window, cx| cx.new(|_| about::AboutView),
+    );
+    match opened {
+        Ok((handle, _)) => {
+            set_about_window(Some(handle.window_id()));
+            let closed = cx.on_window_closed(|_cx, id| {
+                if about_window_id() == Some(id) {
+                    set_about_window(None);
+                }
+            });
+            std::mem::forget(closed);
+            cx.activate(true);
+        }
+        Err(error) => eprintln!("could not open the about window: {error}"),
     }
 }
 
@@ -641,6 +713,10 @@ fn main() {
 
             if open_settings_at_launch {
                 open_settings(cx);
+            } else if std::env::var_os("MANIS_POCKET_ABOUT").is_some() {
+                // Screenshot hook: the About window is otherwise only reachable
+                // through the footer, which needs a pointer.
+                open_about(cx);
             } else {
                 open_panel(cx);
             }

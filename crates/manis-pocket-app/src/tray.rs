@@ -238,8 +238,13 @@ mod linux {
     }
 
     impl ksni::Tray for StatusItem {
-        // A left click should open the panel rather than only showing a menu.
-        const MENU_ON_ACTIVATE: bool = true;
+        // Left click opens the panel; the menu belongs to right click. This flag
+        // is the D-Bus `ItemIsMenu` property: with it set, the bar draws the menu
+        // on a left click and never calls `activate` at all, so the panel could
+        // only ever be opened from the menu item inside the menu. Clicking the
+        // icon itself has to reach `activate`, which means staying at ksni's
+        // default of `false`.
+        const MENU_ON_ACTIVATE: bool = false;
 
         fn id(&self) -> String {
             "io.github.kaigedong.ManisPocket".into()

@@ -657,8 +657,11 @@ impl HistoryPanel {
                 },
             )))
             .child(
-                row("footer-about", "关于").on_click(cx.listener(|_, _, _, _cx| {
-                    show_about();
+                row("footer-about", "关于").on_click(cx.listener(|_, _, _, cx| {
+                    // The version, the project page and the upstream credit live
+                    // in their own window: a menu item that silently did nothing
+                    // off macOS was the old behaviour.
+                    open_about(cx);
                 })),
             )
             .child(row("footer-quit", "退出").on_click(cx.listener(|_, _, _, cx| cx.quit())))
@@ -883,7 +886,6 @@ impl Render for HistoryPanel {
     }
 }
 
-/// Maps the `searchMode` setting onto the core's search mode.
 /// Two-step confirmation for the one action that destroys everything: the first
 /// click arms it, the second clears. Returns whether this click should clear.
 fn clear_all_armed(armed: &mut bool) -> bool {
@@ -892,19 +894,7 @@ fn clear_all_armed(armed: &mut bool) -> bool {
     was_armed
 }
 
-/// Shows what the app is: macOS has a standard about panel, Linux gets the project
-/// page, which is more useful than a menu item that does nothing.
-fn show_about() {
-    #[cfg(target_os = "macos")]
-    icons::show_about_panel();
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = std::process::Command::new("xdg-open")
-            .arg("https://github.com/kaigedong/Manis-Pocket")
-            .spawn();
-    }
-}
-
+/// Maps the `searchMode` setting onto the core's search mode.
 fn search_mode(value: &str) -> SearchMode {
     match value {
         "fuzzy" => SearchMode::Fuzzy,

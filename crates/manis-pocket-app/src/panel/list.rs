@@ -215,35 +215,36 @@ impl ListDelegate for HistoryList {
                     SharedString::from(format!("act-{}-pin", item.id)),
                     pin_icon,
                     selected,
-                    cx.listener(move |state, _, window, cx| {
-                        let history = pin_history.clone();
+                    cx.listener(move |state, _, _window, cx| {
                         let id = pin_id.clone();
                         let pins = rows::available_pins(&used);
                         let panel = state.delegate().panel.clone();
-                        // Toggling reloads the list, which cannot happen while the
-                        // list is dispatching this click.
-                        cx.on_next_frame(window, move |_state, _window, cx| {
-                            let _ = history.toggle_pin(id.clone(), pins.clone());
-                            if let Some(panel) = panel.as_ref().and_then(|panel| panel.upgrade()) {
+                        // The write is a database call, so it happens right here.
+                        // Rebuilding the list cannot: the list is still dispatching
+                        // this click, and a panel task runs once it is done.
+                        let _ = pin_history.toggle_pin(id, pins);
+                        if let Some(panel) = panel.as_ref().and_then(|panel| panel.upgrade()) {
+                            cx.spawn(async move |_state, cx| {
                                 panel.update(cx, |panel, cx| panel.reload(cx));
-                            }
-                        });
+                            })
+                            .detach();
+                        }
                     }),
                 ))
                 .child(action_icon_button(
                     SharedString::from(format!("act-{}-delete", item.id)),
                     gpui_kit::assets::IconName::Trash,
                     selected,
-                    cx.listener(move |state, _, window, cx| {
-                        let history = delete_history.clone();
+                    cx.listener(move |state, _, _window, cx| {
                         let id = delete_id.clone();
                         let panel = state.delegate().panel.clone();
-                        cx.on_next_frame(window, move |_state, _window, cx| {
-                            let _ = history.delete(id.clone());
-                            if let Some(panel) = panel.as_ref().and_then(|panel| panel.upgrade()) {
+                        let _ = delete_history.delete(id.clone());
+                        if let Some(panel) = panel.as_ref().and_then(|panel| panel.upgrade()) {
+                            cx.spawn(async move |_state, cx| {
                                 panel.update(cx, |panel, cx| panel.reload(cx));
-                            }
-                        });
+                            })
+                            .detach();
+                        }
                     }),
                 ))
                 .into_any_element()
@@ -518,6 +519,12 @@ fn action_icon_button(
                 .xsmall()
                 .text_color(tint),
         )
-        .on_click(handler)
+        .on_click(move |event, window, cx| {
+            // The row itself copies and closes the panel on click, and the button
+            // sits inside that row: without this the pin and delete actions also
+            // copied the entry and dismissed the window.
+            cx.stop_propagation();
+            handler(event, window, cx);
+        })
         .into_any_element()
 }

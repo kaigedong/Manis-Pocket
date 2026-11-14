@@ -80,6 +80,11 @@ impl HistoryPanel {
                 window,
                 cx,
             )
+            // The delegate owns the highlighted row: `refresh` and `move_selection`
+            // set it directly. A selectable list keeps a second copy and paints its
+            // own background from it, which is what left a strip of the old row
+            // behind after the keyboard moved the selection.
+            .selectable(false)
         });
 
         // The macOS panel disappears as soon as it stops being the active
@@ -216,16 +221,14 @@ impl HistoryPanel {
         self.load_preview_image(cx);
         let list = self.list.clone();
         list.update(cx, |state, cx| {
-            state.set_selected_index(
-                Some(gpui_kit::base::IndexPath {
-                    section: 0,
-                    row: next,
-                    column: 0,
-                }),
-                window,
-                cx,
-            );
-            state.scroll_to_selected_item(window, cx);
+            let ix = gpui_kit::base::IndexPath {
+                section: 0,
+                row: next,
+                column: 0,
+            };
+            state.delegate_mut().selected = Some(ix);
+            state.scroll_to_item(ix, gpui_kit::ScrollStrategy::Top, window, cx);
+            cx.notify();
         });
         cx.notify();
     }

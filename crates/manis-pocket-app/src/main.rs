@@ -29,7 +29,7 @@ use panel::{HistoryPanel, PANEL_MARGIN, copy_entry_to_clipboard};
 use chrono::Utc;
 use futures::StreamExt;
 use gpui::{
-    App, Bounds, Context, Entity, IntoElement, Point, SharedString, Size, TitlebarOptions, Window,
+    App, Bounds, Context, Entity, IntoElement, SharedString, Size, TitlebarOptions, Window,
     WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point, px, size,
 };
 use gpui_kit::base::{IndexPath, StyledExt, h_flex, v_flex};
@@ -94,16 +94,15 @@ fn panel_bounds(
         return Bounds::centered(None, panel, cx);
     };
     let screen = display.bounds();
-    let margin = px(PANEL_MARGIN);
+    // The usable area: the display without the menu bar and, wherever it is
+    // docked, the Dock. Clamping against `screen` instead is what let a Dock on
+    // the right or along the bottom draw on top of the card.
+    let visible = display.visible_bounds();
 
-    // Keep the whole card on screen whatever the anchor was.
-    let clamp = |origin_x: f32, origin_y: f32| {
-        let max_x = screen.origin.x + screen.size.width - panel.width;
-        let max_y = screen.origin.y + screen.size.height - panel.height;
-        point(
-            px(origin_x.clamp(screen.origin.x.as_f32(), max_x.as_f32())),
-            px(origin_y.clamp(screen.origin.y.as_f32(), max_y.as_f32())),
-        )
+    // Keep the whole card inside the usable area, whatever the anchor was.
+    let place = |origin: (f32, f32)| {
+        let (x, y) = placement::fit_inside(&visible, panel, origin);
+        Bounds::new(point(px(x), px(y)), panel)
     };
 
     // A click on the status icon pins the panel under the icon, whatever the
@@ -119,47 +118,21 @@ fn panel_bounds(
             })
         });
         if let Some(anchor) = anchor {
-            let (x, y) = placement::anchored_origin(&screen, panel, anchor);
-            return Bounds::new(clamp(x, y), panel);
+            return place(placement::anchored_origin(&screen, &visible, panel, anchor));
         }
         // Straight after launch the status item has no frame yet; the top-right
         // corner is where it will be, and it beats following the pointer.
-        return Bounds::new(
-            clamp(
-                default_origin(&screen, panel).x.as_f32(),
-                default_origin(&screen, panel).y.as_f32(),
-            ),
-            panel,
-        );
+        return place(placement::default_origin(&visible, panel));
     }
 
-    let origin = match settings.popup_position.as_str() {
-        // Centred on the screen, like the macOS `.center` mode.
-        "center" => point(
-            screen.origin.x + (screen.size.width - panel.width) / 2.0,
-            screen.origin.y + (screen.size.height - panel.height) / 2.0,
-        ),
+    place(match settings.popup_position.as_str() {
+        // Centred on the usable area, like the macOS `.center` mode.
+        "center" => placement::center_origin(&visible, panel),
         // `statusItem`, `window` and `lastPosition` need the menu-bar button or
         // the frontmost window rectangle, which are not wired yet; the top-right
         // anchor is their closest honest approximation.
-        _ => default_origin(&screen, panel),
-    };
-    let _ = margin;
-    Bounds::new(origin, panel)
-}
-
-/// Top-right corner, 10px from the edge and 6px under the menu bar.
-///
-/// The window carries a transparent margin for the card's shadow, so the offset
-/// applies to the card rather than the window's invisible border.
-fn default_origin(screen: &Bounds<gpui::Pixels>, panel: Size<gpui::Pixels>) -> Point<gpui::Pixels> {
-    let margin = px(PANEL_MARGIN);
-    let gap = px(10.0);
-    let menu_bar = px(28.0);
-    point(
-        screen.origin.x + screen.size.width - panel.width + margin - gap,
-        screen.origin.y + menu_bar + px(6.0) - margin,
-    )
+        _ => placement::default_origin(&visible, panel),
+    })
 }
 
 /// Reports whether the command reached a running instance.

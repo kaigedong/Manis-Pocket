@@ -480,13 +480,14 @@ impl ListDelegate for HistoryList {
             return;
         }
 
-        // Enter copies what is highlighted; with nothing highlighted (a filter can
-        // clear it) it falls back to the first row, so the key never goes dead.
+        // Enter copies what is highlighted. The panel opens with nothing
+        // highlighted, and then enter takes the newest entry — not a pinned one
+        // above it — so the key never goes dead.
         let ix = match self.selected {
             Some(ix) => ix,
             None if !self.items.is_empty() => gpui_kit::base::IndexPath {
                 section: 0,
-                row: 0,
+                row: rows::default_row(self.items.len(), self.pinned_count),
                 column: 0,
             },
             None => return,

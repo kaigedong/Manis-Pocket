@@ -69,9 +69,10 @@ impl HistoryPanel {
             cx.new(|cx| InputState::new(window, cx).placeholder(SharedString::from("搜索")));
         let pins_position = settings.pins_position.clone();
         let arranged = rows::arrange(all_items.clone(), &pins_position, &settings.sort_by);
-        // The newest history entry, skipping the pinned block on top.
-        let default_row = rows::default_row(arranged.items.len(), arranged.pinned_count);
-        let default_id = arranged.items.get(default_row).map(|item| item.id.clone());
+        // The panel opens with nothing highlighted: a highlighted row in the
+        // accent blue sat right on the pinned block's blue rule and hid where the
+        // pins end. The arrow keys start a selection; enter without one still
+        // copies the newest entry.
         // The footer counts what the list shows. `refresh` keeps this current, but
         // it only runs when the query or the history changes, so the first paint
         // has to start from the entries the panel was built with.
@@ -82,11 +83,7 @@ impl HistoryPanel {
                 HistoryList {
                     items: arranged.items,
                     pinned_count: arranged.pinned_count,
-                    selected: Some(IndexPath {
-                        section: 0,
-                        row: default_row,
-                        column: 0,
-                    }),
+                    selected: None,
                     history: history.clone(),
                     show_application_icons: settings.show_application_icons,
                     paste_by_default: settings.paste_by_default,
@@ -170,7 +167,7 @@ impl HistoryPanel {
                 })
                 .unwrap_or_default(),
             visible_count,
-            selected_id: default_id,
+            selected_id: None,
             preview_images: std::collections::HashMap::new(),
             hover_card: None,
             magnifier: None,
@@ -380,6 +377,7 @@ impl HistoryPanel {
 
         let pins_position = self.settings.pins_position.clone();
         let sort_by = self.settings.sort_by.clone();
+        let searching = !query.trim().is_empty();
         // Keep the panel's own view of the list: the render and the selection
         // resolve against these instead of reading the list entity.
         self.visible_count = items.len();
@@ -387,15 +385,21 @@ impl HistoryPanel {
             let delegate = state.delegate_mut();
             delegate.highlights = highlights;
             delegate.replace_items(items, &pins_position, &sort_by);
-            // Open on the newest history entry rather than the pinned block.
-            let row = rows::default_row(delegate.items.len(), delegate.pinned_count);
-            delegate.selected = Some(IndexPath {
-                section: 0,
-                row,
-                column: 0,
-            });
+            // The full list opens with nothing highlighted, like the panel itself.
+            // A search highlights its best match, so it is clear what enter takes.
+            delegate.selected = searching
+                .then(|| rows::default_row(delegate.items.len(), delegate.pinned_count))
+                .filter(|row| *row < delegate.items.len())
+                .map(|row| IndexPath {
+                    section: 0,
+                    row,
+                    column: 0,
+                });
             cx.notify();
-            delegate.items.get(row).map(|item| item.id.clone())
+            delegate
+                .selected
+                .and_then(|ix| delegate.items.get(ix.row))
+                .map(|item| item.id.clone())
         });
     }
 }
@@ -1043,6 +1047,34 @@ impl Render for HistoryPanel {
             .relative()
             .flex()
             .size_full()
+            // The search box keeps focus, and its single-line input binds the
+            // arrow and page keys to cursor moves that do nothing on one line but
+            // still swallow the key, so `on_key_down` below never saw them. The
+            // capture phase runs from the root down, ahead of the input.
+            .capture_action(cx.listener(
+                |this, _: &gpui_kit::component::input::MoveUp, window, cx| {
+                    this.move_selection(-1, window, cx);
+                    cx.stop_propagation();
+                },
+            ))
+            .capture_action(cx.listener(
+                |this, _: &gpui_kit::component::input::MoveDown, window, cx| {
+                    this.move_selection(1, window, cx);
+                    cx.stop_propagation();
+                },
+            ))
+            .capture_action(cx.listener(
+                |this, _: &gpui_kit::component::input::MovePageUp, window, cx| {
+                    this.move_selection(-8, window, cx);
+                    cx.stop_propagation();
+                },
+            ))
+            .capture_action(cx.listener(
+                |this, _: &gpui_kit::component::input::MovePageDown, window, cx| {
+                    this.move_selection(8, window, cx);
+                    cx.stop_propagation();
+                },
+            ))
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 let key = event.keystroke.key.as_str();
                 let modifiers = event.keystroke.modifiers;

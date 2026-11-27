@@ -178,7 +178,7 @@ impl ListDelegate for HistoryList {
                                 .rounded(px(3.0)),
                         )
                         .child(zoom::bounds_probe(probe))
-                        .on_hover(move |hovered, _window, cx| {
+                        .on_hover(move |hovered, window, cx| {
                             // Not a list listener: the panel is updated directly,
                             // which is only safe while the list is not updating.
                             let Some(panel) =
@@ -190,7 +190,7 @@ impl ListDelegate for HistoryList {
                             let anchor = hover_probe.get();
                             let hovered = *hovered;
                             panel.update(cx, |panel, cx| {
-                                panel.thumb_hovered(id, anchor, hovered, cx);
+                                panel.thumb_hovered(id, anchor, hovered, window, cx);
                             });
                         }),
                 )
@@ -350,13 +350,15 @@ impl ListDelegate for HistoryList {
                 .py(px(0.0))
         };
 
+        let is_image_row = matches!(rows::row_kind(item), rows::RowKind::Image);
+        let row_hover_panel = self.panel.clone();
         Some(
             item_element
                 .child(body)
                 .on_hover(cx.listener(
                     move |state: &mut ListState<HistoryList>,
                           hovered: &bool,
-                          _window: &mut Window,
+                          window: &mut Window,
                           cx: &mut Context<ListState<HistoryList>>| {
                         let delegate = state.delegate_mut();
                         // Enter and leave arrive in pointer order, so sweeping
@@ -371,6 +373,17 @@ impl ListDelegate for HistoryList {
                         } else {
                             false
                         };
+                        if *hovered
+                            && !is_image_row
+                            && let Some(panel) =
+                                row_hover_panel.as_ref().and_then(|panel| panel.upgrade())
+                        {
+                            window.on_next_frame(move |_window, cx| {
+                                panel.update(cx, |panel, cx| {
+                                    panel.non_image_row_hovered(cx);
+                                });
+                            });
+                        }
                         if changed {
                             cx.notify();
                         }

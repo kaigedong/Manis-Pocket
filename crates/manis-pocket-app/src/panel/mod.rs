@@ -8,11 +8,31 @@ use crate::*;
 
 mod list;
 mod metrics;
+pub(crate) mod preview_window;
 mod zoom;
 
 pub(crate) use list::HistoryList;
 pub(crate) use metrics::PANEL_MARGIN;
 use metrics::*;
+
+/// Delay before opening the floating preview window from a closed state so
+/// fast vertical mouse movement across rows never flashes a window.
+const PREVIEW_OPEN_DELAY: std::time::Duration = std::time::Duration::from_millis(90);
+/// Grace window after leaving a thumbnail so the pointer can cross the gap into
+/// the floating preview window to zoom or click.
+const PREVIEW_LEAVE_THUMB_DELAY: std::time::Duration = std::time::Duration::from_millis(220);
+/// Short grace delay after leaving the floating preview window itself.
+const PREVIEW_LEAVE_WINDOW_DELAY: std::time::Duration = std::time::Duration::from_millis(120);
+
+/// Snapshot of the currently hovered image thumbnail and panel screen geometry.
+#[derive(Clone, Debug)]
+struct HoveredThumb {
+    id: String,
+    anchor: gpui::Bounds<gpui::Pixels>,
+    panel_bounds: gpui::Bounds<gpui::Pixels>,
+    visible_bounds: gpui::Bounds<gpui::Pixels>,
+    display_id: Option<gpui_kit::DisplayId>,
+}
 
 pub(crate) struct HistoryPanel {
     history: Arc<HistoryManager>,
@@ -39,19 +59,22 @@ pub(crate) struct HistoryPanel {
         String,
         Option<(std::sync::Arc<gpui_kit::RenderImage>, f32, f32)>,
     >,
-    /// The card opened by hovering an image row's thumbnail.
-    hover_card: Option<zoom::HoverCard>,
-    /// The pointer over a picture that is being magnified.
-    magnifier: Option<zoom::Magnifier>,
-    /// Zoom the user picked with the wheel or a pinch; `None` starts at the
-    /// picture's native size. Reset whenever another picture is zoomed.
+    /// Currently hovered image thumbnail driving the standalone preview window.
+    hovered_thumb: Option<HoveredThumb>,
+    /// Whether the hover-intent delay has elapsed for `hovered_thumb`.
+    preview_intent_ready: bool,
+    /// Monotonic token cancelling stale preview open/close timers.
+    preview_generation: u64,
+    /// Pointer over the preview sidebar's picture while magnifying.
+    sidebar_magnifier: Option<gpui::Point<gpui::Pixels>>,
+    /// Zoom the user picked with the wheel or a pinch in the sidebar; `None`
+    /// starts at the picture's native size.
     zoom_factor: Option<f32>,
-    /// Near-native decodes for the magnifier, keyed by entry id. Decoded off
+    /// Near-native decodes for magnification, keyed by entry id. Decoded off
     /// the main thread because a large screenshot takes a noticeable moment.
     detail_images: std::collections::HashMap<String, Option<zoom::Picture>>,
     detail_loading: std::collections::HashSet<String>,
-    /// Where the hover card's and the sidebar's pictures were laid out.
-    card_probe: zoom::BoundsCell,
+    /// Where the sidebar's picture was laid out.
     sidebar_probe: zoom::BoundsCell,
     /// Shared app updater state for the Manis-style top-bar update pill.
     updater: Option<Entity<updater::UpdateStore>>,
@@ -176,12 +199,13 @@ impl HistoryPanel {
             visible_count,
             selected_id: None,
             preview_images: std::collections::HashMap::new(),
-            hover_card: None,
-            magnifier: None,
+            hovered_thumb: None,
+            preview_intent_ready: false,
+            preview_generation: 0,
+            sidebar_magnifier: None,
             zoom_factor: None,
             detail_images: std::collections::HashMap::new(),
             detail_loading: std::collections::HashSet::new(),
-            card_probe: zoom::BoundsCell::default(),
             sidebar_probe: zoom::BoundsCell::default(),
             updater,
         }
@@ -250,9 +274,9 @@ impl HistoryPanel {
         };
         self.selected_id = ids.get(next).cloned();
         self.load_preview_image(cx);
-        // The list is about to scroll, which moves the thumbnail out from under
-        // the card that was anchored to it.
-        self.close_hover_card();
+        // The list is about to scroll, which moves thumbnails out from under
+        // the pointer.
+        self.cancel_image_preview(cx);
         let list = self.list.clone();
         list.update(cx, |state, cx| {
             let ix = gpui_kit::base::IndexPath {
@@ -346,7 +370,7 @@ impl HistoryPanel {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         // The rows are about to be replaced, so the thumbnail a card points at
         // may no longer be where the card was placed.
-        self.close_hover_card();
+        self.cancel_image_preview(cx);
         // The image cache is filled from the current selection, so refresh it
         // whenever the list content changes.
         let query = self.input.read(cx).value().to_string();
@@ -413,8 +437,7 @@ impl HistoryPanel {
 }
 
 impl HistoryPanel {
-    /// The right-hand preview sidebar: full text plus where it came from.
-    /// The selected entry's picture, if it has one. The pointer magnifies it.
+    /// The selected entry's picture in the `⌃Space` sidebar. The pointer magnifies it.
     fn preview_image(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let item = self.selected_item()?;
         if !matches!(rows::row_kind(&item), rows::RowKind::Image) {
@@ -424,40 +447,21 @@ impl HistoryPanel {
         let max_width = (self.settings.preview_width as f32 - 24.0).max(80.0);
         let scale = (max_width / w).min(1.0);
         let (width, height) = (w * scale, h * scale);
-        let frame = self.magnified_picture(
-            zoom::Surface::Sidebar,
-            &item.id,
-            render,
-            (width, height),
-            self.sidebar_probe.clone(),
-        );
-        Some(
-            self.with_magnifier(frame, zoom::Surface::Sidebar, item.id.clone(), width, cx)
-                .into_any_element(),
-        )
-    }
-
-    /// A picture box for `surface`, magnified when the pointer is on it.
-    fn magnified_picture(
-        &self,
-        surface: zoom::Surface,
-        id: &str,
-        fit: std::sync::Arc<gpui_kit::RenderImage>,
-        (width, height): (f32, f32),
-        probe: zoom::BoundsCell,
-    ) -> gpui::Div {
-        let detail = self.detail_images.get(id).cloned().flatten();
+        let detail = self.detail_images.get(&item.id).cloned().flatten();
         let zoom = self
-            .magnifier
-            .filter(|magnifier| magnifier.surface == surface)
-            .map(|magnifier| (magnifier.point, self.zoom_factor_for(id, width)));
-        zoom::picture_box(
-            fit,
+            .sidebar_magnifier
+            .map(|point| (point, self.zoom_factor_for(&item.id, width)));
+        let frame = zoom::picture_box(
+            render,
             detail.map(|(render, _, _)| render),
             width,
             height,
             zoom,
-            probe,
+            self.sidebar_probe.clone(),
+        );
+        Some(
+            self.with_sidebar_magnifier(frame, item.id.clone(), width, cx)
+                .into_any_element(),
         )
     }
 
@@ -479,49 +483,37 @@ impl HistoryPanel {
         zoom::default_factor(native, shown_width)
     }
 
-    /// Turns a picture box into a magnifier: the pointer position drives the
-    /// zoomed view, and the wheel or a pinch changes the zoom.
-    fn with_magnifier(
+    /// Turns the sidebar picture box into a magnifier: the pointer position
+    /// drives the zoomed view, and the wheel or a pinch changes the zoom.
+    fn with_sidebar_magnifier(
         &self,
         frame: gpui::Div,
-        surface: zoom::Surface,
         id: String,
         shown_width: f32,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let element_id = match surface {
-            zoom::Surface::Card => "zoom-card-picture",
-            zoom::Surface::Sidebar => "zoom-sidebar-picture",
-        };
         let hover_id = id.clone();
         let scroll_id = id.clone();
         let pinch_id = id;
         frame
-            .id(element_id)
+            .id("zoom-sidebar-picture")
             .cursor(gpui::CursorStyle::Crosshair)
             .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
                 if *hovered {
                     this.ensure_detail_image(hover_id.clone(), cx);
-                } else if this.magnifier.map(|magnifier| magnifier.surface) == Some(surface) {
-                    this.magnifier = None;
+                } else if this.sidebar_magnifier.is_some() {
+                    this.sidebar_magnifier = None;
                     cx.notify();
                 }
             }))
             .on_mouse_move(
                 cx.listener(move |this, event: &gpui::MouseMoveEvent, _window, cx| {
-                    let probe = match surface {
-                        zoom::Surface::Card => this.card_probe.get(),
-                        zoom::Surface::Sidebar => this.sidebar_probe.get(),
-                    };
-                    let Some(bounds) = probe else {
+                    let Some(bounds) = this.sidebar_probe.get() else {
                         return;
                     };
-                    let next = zoom::Magnifier {
-                        surface,
-                        point: zoom::local_point(bounds, event.position),
-                    };
-                    if this.magnifier != Some(next) {
-                        this.magnifier = Some(next);
+                    let next = zoom::local_point(bounds, event.position);
+                    if this.sidebar_magnifier != Some(next) {
+                        this.sidebar_magnifier = Some(next);
                         cx.notify();
                     }
                 }),
@@ -545,8 +537,8 @@ impl HistoryPanel {
             )
     }
 
-    /// Decodes an entry's picture near native size for the magnifier, off the
-    /// main thread. The screen-sized preview comes out of the same decode.
+    /// Decodes an entry's picture near native size for the floating preview
+    /// window and sidebar magnifier, off the main thread.
     fn ensure_detail_image(&mut self, id: String, cx: &mut Context<Self>) {
         if self.detail_images.contains_key(&id) || !self.detail_loading.insert(id.clone()) {
             return;
@@ -563,7 +555,10 @@ impl HistoryPanel {
                         .into_iter()
                         .find(|content| content.content_type == "public.png")?
                         .value?;
-                    icons::png_to_render_images(&bytes, &[900, zoom::DETAIL_MAX_WIDTH])
+                    icons::png_to_render_images(
+                        &bytes,
+                        &[zoom::PREVIEW_FIT_MAX_WIDTH, zoom::DETAIL_MAX_WIDTH],
+                    )
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
@@ -575,17 +570,24 @@ impl HistoryPanel {
                     }
                     _ => (None, None),
                 };
-                if !this.preview_images.contains_key(&id) {
-                    if this.preview_images.len() > 32 {
-                        this.preview_images.clear();
-                    }
-                    this.preview_images.insert(id.clone(), preview);
+                if this.preview_images.len() > 32 {
+                    this.preview_images.clear();
                 }
+                this.preview_images.insert(id.clone(), preview);
                 // Near-native decodes are large; a handful is plenty.
                 if this.detail_images.len() >= 4 {
                     this.detail_images.clear();
                 }
-                this.detail_images.insert(id, detail);
+                this.detail_images.insert(id.clone(), detail);
+
+                let still_targeting = this
+                    .hovered_thumb
+                    .as_ref()
+                    .is_some_and(|hovered| hovered.id == id && this.preview_intent_ready)
+                    || preview_window::current_id(cx).as_deref() == Some(id.as_str());
+                if still_targeting {
+                    this.open_preview_if_ready(cx);
+                }
                 cx.notify();
             });
         })
@@ -593,119 +595,155 @@ impl HistoryPanel {
     }
 
     /// A row thumbnail gained or lost the pointer.
+    ///
+    /// Opens the standalone floating preview window beside the panel so moving
+    /// the pointer vertically across neighboring rows is never blocked.
     pub(crate) fn thumb_hovered(
         &mut self,
         id: String,
         anchor: Option<gpui::Bounds<gpui::Pixels>>,
         hovered: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) {
         if hovered {
             let Some(anchor) = anchor else {
                 return;
             };
-            let same = self.hover_card.as_ref().is_some_and(|card| card.id == id);
-            if !same {
-                self.zoom_factor = None;
-                self.magnifier = None;
-                self.card_probe.set(None);
-            }
-            let over_card = same && self.hover_card.as_ref().is_some_and(|card| card.over_card);
-            self.hover_card = Some(zoom::HoverCard {
+            let panel_bounds = window.window_bounds().get_bounds();
+            let display = window.display(cx).or_else(|| cx.primary_display());
+            let visible_bounds = display
+                .as_ref()
+                .map(|display| display.visible_bounds())
+                .unwrap_or(panel_bounds);
+            let display_id = display.map(|display| display.id());
+
+            self.preview_generation = self.preview_generation.wrapping_add(1);
+            let generation = self.preview_generation;
+            let already_open = preview_window::is_open(cx);
+            self.hovered_thumb = Some(HoveredThumb {
                 id: id.clone(),
                 anchor,
-                over_thumb: true,
-                over_card,
+                panel_bounds,
+                visible_bounds,
+                display_id,
             });
+            self.preview_intent_ready = already_open;
             self.ensure_detail_image(id, cx);
-            cx.notify();
-        } else if let Some(card) = self.hover_card.as_mut().filter(|card| card.id == id) {
-            // Enter and leave can arrive in either order when the pointer moves
-            // from the thumbnail onto the card; the card only closes once the
-            // pointer is on neither.
-            card.over_thumb = false;
-            if !card.over_card {
-                self.close_hover_card();
+
+            if already_open {
+                self.open_preview_if_ready(cx);
+            } else {
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(PREVIEW_OPEN_DELAY).await;
+                    let _ = this.update(cx, |this, cx| {
+                        if this.preview_generation == generation && this.hovered_thumb.is_some() {
+                            this.preview_intent_ready = true;
+                            this.open_preview_if_ready(cx);
+                        }
+                    });
+                })
+                .detach();
             }
-            cx.notify();
+        } else if self
+            .hovered_thumb
+            .as_ref()
+            .is_some_and(|thumb| thumb.id == id)
+        {
+            self.hovered_thumb = None;
+            self.preview_intent_ready = false;
+            self.schedule_preview_close(PREVIEW_LEAVE_THUMB_DELAY, cx);
         }
     }
 
-    fn card_hovered(&mut self, hovered: bool, cx: &mut Context<Self>) {
-        let Some(card) = self.hover_card.as_mut() else {
+    /// Pointer moved onto a non-image row: immediately dismiss any floating
+    /// image preview so browsing text rows never lingers an unrelated picture.
+    pub(crate) fn non_image_row_hovered(&mut self, cx: &mut Context<Self>) {
+        self.hovered_thumb = None;
+        self.preview_intent_ready = false;
+        self.preview_generation = self.preview_generation.wrapping_add(1);
+        if !preview_window::is_hovered(cx) {
+            preview_window::close(cx);
+        }
+    }
+
+    fn cancel_image_preview(&mut self, cx: &mut Context<Self>) {
+        self.hovered_thumb = None;
+        self.preview_intent_ready = false;
+        self.preview_generation = self.preview_generation.wrapping_add(1);
+        preview_window::close(cx);
+    }
+
+    fn schedule_preview_close(&mut self, delay: std::time::Duration, cx: &mut Context<Self>) {
+        self.preview_generation = self.preview_generation.wrapping_add(1);
+        let generation = self.preview_generation;
+        if !preview_window::is_open(cx) {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.preview_generation == generation
+                    && this.hovered_thumb.is_none()
+                    && !preview_window::is_hovered(cx)
+                {
+                    preview_window::close(cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn open_preview_if_ready(&mut self, cx: &mut Context<Self>) {
+        let Some(hovered) = self.hovered_thumb.clone() else {
             return;
         };
-        card.over_card = hovered;
-        if !hovered && !card.over_thumb {
-            self.close_hover_card();
-        }
-        cx.notify();
-    }
-
-    fn close_hover_card(&mut self) {
-        self.hover_card = None;
-        if self.magnifier.map(|magnifier| magnifier.surface) == Some(zoom::Surface::Card) {
-            self.magnifier = None;
-        }
-    }
-
-    /// The card a hovered thumbnail opens: the whole picture, magnified under
-    /// the pointer. Clicking it copies the entry, like clicking its row.
-    fn render_hover_card(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let card = self.hover_card.as_ref()?;
-        // The screen-sized decode once it is ready; the row thumbnail meanwhile,
-        // so the card appears at once instead of after the decode.
-        let (fit, w, h) = self
-            .preview_images
-            .get(&card.id)
-            .cloned()
-            .flatten()
-            .or_else(|| icons::cached_thumb(&card.id))?;
-        // The list column: the card's inner edge to the preview sidebar.
-        let column_left = PANEL_MARGIN + 8.0;
-        let column_right = PANEL_MARGIN + self.settings.window_width as f32 - 8.0;
-        let layout = zoom::card_layout(
-            card.anchor,
-            (w, h),
-            (column_left, column_right),
-            window.viewport_size().height.as_f32(),
+        let Some((fit, fit_w, fit_h)) = self.preview_images.get(&hovered.id).cloned().flatten()
+        else {
+            // Still decoding on the background thread; `ensure_detail_image`
+            // will call back once the full image is ready.
+            return;
+        };
+        let detail_entry = self.detail_images.get(&hovered.id).cloned().flatten();
+        let (native_w, native_h) = detail_entry
+            .as_ref()
+            .map(|(_, w, h)| (*w, *h))
+            .unwrap_or((fit_w, fit_h));
+        let layout = zoom::preview_window_layout(
+            hovered.panel_bounds,
+            PANEL_MARGIN,
+            hovered.anchor,
+            (native_w, native_h),
+            hovered.visible_bounds,
         );
-        let size = (layout.image_width, layout.image_height);
-        let frame = self.magnified_picture(
-            zoom::Surface::Card,
-            &card.id,
-            fit,
-            size,
-            self.card_probe.clone(),
+
+        let panel_handle = cx.entity().downgrade();
+        let on_leave: Arc<dyn Fn(&mut App)> = Arc::new(move |cx: &mut App| {
+            if let Some(panel) = panel_handle.upgrade() {
+                panel.update(cx, |panel, cx| {
+                    panel.schedule_preview_close(PREVIEW_LEAVE_WINDOW_DELAY, cx);
+                });
+            } else {
+                preview_window::close(cx);
+            }
+        });
+
+        preview_window::show(
+            preview_window::PreviewRequest {
+                id: hovered.id,
+                fit,
+                detail: detail_entry.map(|(render, _, _)| render),
+                native_size: (
+                    native_w.round().max(1.0) as u32,
+                    native_h.round().max(1.0) as u32,
+                ),
+                layout,
+                display_id: hovered.display_id,
+                history: self.history.clone(),
+                on_leave,
+            },
+            cx,
         );
-        let picture = self.with_magnifier(frame, zoom::Surface::Card, card.id.clone(), size.0, cx);
-        let copy_id = card.id.clone();
-        let history = self.history.clone();
-        Some(
-            div()
-                .id("zoom-card")
-                .absolute()
-                .left(px(layout.left))
-                .top(px(layout.top))
-                .p(px(zoom::CARD_PADDING))
-                .rounded(px(8.0))
-                .bg(gpui::white())
-                .border_1()
-                .border_color(gpui::black().opacity(0.12))
-                .shadow_lg()
-                // The rows under the card must not react to the pointer on it.
-                .occlude()
-                .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
-                    this.card_hovered(*hovered, cx);
-                }))
-                .on_click(move |_, window, _cx| {
-                    if copy_entry_to_clipboard(&history, &copy_id) {
-                        window.remove_window();
-                    }
-                })
-                .child(picture)
-                .into_any_element(),
-        )
     }
 
     /// Decodes the selected entry's picture once and keeps it for repaints.
@@ -803,7 +841,7 @@ impl HistoryPanel {
                     .find(|content| content.content_type == "public.png")
             })
             .and_then(|content| content.value)
-            .and_then(|bytes| icons::png_to_render_image(&bytes, 900));
+            .and_then(|bytes| icons::png_to_render_image(&bytes, zoom::PREVIEW_FIT_MAX_WIDTH));
         self.preview_images.insert(item.id.clone(), decoded);
     }
 
@@ -1049,7 +1087,6 @@ impl Render for HistoryPanel {
         // being updated. The counts are kept instead.
         let count = self.visible_count;
         let checked = self.checked.len();
-        let hover_card = self.render_hover_card(window, cx);
         let update_pill = self
             .updater
             .as_ref()
@@ -1217,8 +1254,6 @@ impl Render for HistoryPanel {
                             .children(self.preview_open.then(|| self.render_preview(cx))),
                     ),
             )
-            // Last, so it paints over the card and wins the pointer.
-            .children(hover_card)
     }
 }
 

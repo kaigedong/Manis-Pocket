@@ -514,6 +514,13 @@ fn close_panel_window(cx: &mut App, id: gpui::WindowId) -> bool {
     false
 }
 
+/// Closes the history panel if it is currently open.
+pub(crate) fn close_panel_if_open(cx: &mut App) {
+    if let Some(id) = panel_window_id() {
+        close_panel_window(cx, id);
+    }
+}
+
 /// The SwiftUI build opens the panel with ⇧⌘C (modifiers 768 + key code 8).
 fn register_popup_hotkey() {
     use global_hotkey::GlobalHotKeyManager;
@@ -677,10 +684,13 @@ fn main() {
             register_popup_hotkey();
 
             // The panel is created on demand, so its id has to be forgotten the
-            // moment the window really closes.
-            let closed = cx.on_window_closed(|_cx, id| {
+            // moment the window really closes; closing it also dismisses any
+            // floating image preview window anchored beside it.
+            let closed = cx.on_window_closed(|cx, id| {
+                panel::preview_window::on_window_closed(cx, id);
                 if panel_window_id() == Some(id) {
                     set_panel_window(None);
+                    panel::preview_window::close(cx);
                 }
             });
             std::mem::forget(closed);

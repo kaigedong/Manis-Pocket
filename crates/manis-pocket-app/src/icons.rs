@@ -255,9 +255,30 @@ mod macos {
 /// Returns the image and the size it should occupy. A 4000 px screenshot would
 /// otherwise be uploaded as a 4000 px texture just to be drawn 380 px wide.
 pub fn png_to_render_image(bytes: &[u8], max_width: u32) -> Option<(Arc<RenderImage>, f32, f32)> {
+    png_to_render_images(bytes, &[max_width])?.pop()
+}
+
+/// Decodes PNG bytes once and returns one render image per requested width.
+///
+/// The hover zoom wants a screen-sized copy and a near-native one; decoding the
+/// PNG twice would double the cost of the slowest step.
+pub fn png_to_render_images(
+    bytes: &[u8],
+    max_widths: &[u32],
+) -> Option<Vec<(Arc<RenderImage>, f32, f32)>> {
+    let decoded = image::load_from_memory(bytes).ok()?;
+    max_widths
+        .iter()
+        .map(|max_width| scaled_render_image(decoded.clone(), *max_width))
+        .collect()
+}
+
+fn scaled_render_image(
+    mut decoded: image::DynamicImage,
+    max_width: u32,
+) -> Option<(Arc<RenderImage>, f32, f32)> {
     use image::{Frame, ImageBuffer, Rgba};
 
-    let mut decoded = image::load_from_memory(bytes).ok()?;
     if decoded.width() > max_width {
         let height = (decoded.height() as f64 * (max_width as f64 / decoded.width() as f64))
             .round()

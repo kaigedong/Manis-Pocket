@@ -161,11 +161,38 @@ impl ListDelegate for HistoryList {
                 // The list measures one row and applies it to all of them, so a
                 // tall thumbnail would stretch every text row with it.
                 let scale = (ROW_THUMB_HEIGHT / height).min(340.0 / width).min(1.0);
+                // Hovering the thumbnail opens the zoom card next to it, so the
+                // panel needs to know where the thumbnail was drawn.
+                let probe = zoom::BoundsCell::default();
+                let hover_probe = probe.clone();
+                let hover_panel = self.panel.clone();
+                let thumb_id = item.id.clone();
                 row.child(
-                    img(render)
-                        .w(px(width * scale))
-                        .h(px(height * scale))
-                        .rounded(px(3.0)),
+                    div()
+                        .id(("thumb", ix.row))
+                        .relative()
+                        .child(
+                            img(render)
+                                .w(px(width * scale))
+                                .h(px(height * scale))
+                                .rounded(px(3.0)),
+                        )
+                        .child(zoom::bounds_probe(probe))
+                        .on_hover(move |hovered, _window, cx| {
+                            // Not a list listener: the panel is updated directly,
+                            // which is only safe while the list is not updating.
+                            let Some(panel) =
+                                hover_panel.as_ref().and_then(|panel| panel.upgrade())
+                            else {
+                                return;
+                            };
+                            let id = thumb_id.clone();
+                            let anchor = hover_probe.get();
+                            let hovered = *hovered;
+                            panel.update(cx, |panel, cx| {
+                                panel.thumb_hovered(id, anchor, hovered, cx);
+                            });
+                        }),
                 )
             }
             None => row.child(h_flex().flex_1().min_w(px(0.0)).overflow_hidden().children(

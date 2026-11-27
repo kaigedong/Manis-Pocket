@@ -18,6 +18,7 @@ use manis_pocket_core::history::HistoryManager;
 use std::sync::Arc;
 
 use crate::settings::Settings;
+use crate::updater::{self, UpdateStore};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
@@ -28,6 +29,7 @@ pub enum Pane {
     Storage,
     Advanced,
     Sync,
+    Updates,
 }
 
 impl Pane {
@@ -41,10 +43,11 @@ impl Pane {
             Pane::Storage => "storage",
             Pane::Advanced => "advanced",
             Pane::Sync => "sync",
+            Pane::Updates => "updates",
         }
     }
 
-    const ALL: [Pane; 7] = [
+    const ALL: [Pane; 8] = [
         Pane::General,
         Pane::Appearance,
         Pane::Pins,
@@ -52,6 +55,7 @@ impl Pane {
         Pane::Storage,
         Pane::Advanced,
         Pane::Sync,
+        Pane::Updates,
     ];
 
     fn title(self) -> &'static str {
@@ -63,6 +67,7 @@ impl Pane {
             Pane::Storage => "存储",
             Pane::Advanced => "高级",
             Pane::Sync => "同步",
+            Pane::Updates => "关于与更新",
         }
     }
 }
@@ -75,6 +80,8 @@ pub struct SettingsView {
     /// Used by the devices pane to list paired peers.
     history: Arc<HistoryManager>,
     pane: Pane,
+    /// Shared app updater state for the About & Updates pane and sidebar badge.
+    updater: Option<gpui::Entity<UpdateStore>>,
     /// Diagnostic-only field: lets the same input component be tried in a normal
     /// window, which tells apart "the panel window" from "the text element".
     probe: Option<gpui::Entity<InputState>>,
@@ -84,20 +91,33 @@ impl SettingsView {
     pub fn new(
         database_path: String,
         history: Arc<HistoryManager>,
+        initial_pane: Option<Pane>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let probe = std::env::var("MANIS_POCKET_IME_PROBE")
             .ok()
             .map(|_| cx.new(|cx| InputState::new(window, cx).placeholder("IME test")));
+        let pane = initial_pane
+            .or_else(|| {
+                std::env::var("MANIS_POCKET_PANE")
+                    .ok()
+                    .and_then(|name| Pane::ALL.into_iter().find(|pane| pane.key() == name))
+            })
+            .unwrap_or(Pane::General);
+        let updater = updater::entity(cx);
+        if let Some(store) = &updater {
+            cx.observe(store, |_, _, cx| cx.notify()).detach();
+            if pane == Pane::Updates {
+                store.update(cx, |updater, cx| updater.maybe_auto_check(cx));
+            }
+        }
         Self {
             settings: Settings::load(&database_path),
             database_path,
             history,
-            pane: std::env::var("MANIS_POCKET_PANE")
-                .ok()
-                .and_then(|name| Pane::ALL.into_iter().find(|pane| pane.key() == name))
-                .unwrap_or(Pane::General),
+            pane,
+            updater,
             probe,
         }
     }
@@ -106,8 +126,13 @@ impl SettingsView {
         self.settings.save(&self.database_path);
     }
 
-    fn set_pane(&mut self, pane: Pane, cx: &mut Context<Self>) {
+    pub fn set_pane(&mut self, pane: Pane, cx: &mut Context<Self>) {
         self.pane = pane;
+        if pane == Pane::Updates
+            && let Some(store) = &self.updater
+        {
+            store.update(cx, |updater, cx| updater.maybe_auto_check(cx));
+        }
         cx.notify();
     }
 }
@@ -240,6 +265,11 @@ fn note(text: impl Into<SharedString>) -> AnyElement {
 
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let update_badge = self
+            .updater
+            .as_ref()
+            .and_then(|store| store.read(cx).badge_version().map(str::to_owned));
+
         let sidebar = v_flex()
             .w(px(160.0))
             .h_full()
@@ -247,18 +277,36 @@ impl Render for SettingsView {
             .gap_0p5()
             .p_2()
             .children(Pane::ALL.map(|pane| {
-                let mut row = div()
+                let mut row = h_flex()
                     .id(SharedString::from(pane.title()))
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .gap_1()
                     .px_2()
                     .py_1()
                     .rounded_md()
-                    .text_sm();
+                    .text_sm()
+                    .cursor_pointer();
                 if self.pane == pane {
                     row = row.bg(gpui::black().opacity(0.08));
                 }
+                let badge = (pane == Pane::Updates)
+                    .then(|| update_badge.clone())
+                    .flatten();
                 row.hover(|row| row.bg(gpui::black().opacity(0.04)))
                     .on_click(cx.listener(move |this, _, _, cx| this.set_pane(pane, cx)))
                     .child(pane.title())
+                    .children(badge.map(|version| {
+                        div()
+                            .px_1p5()
+                            .py(px(1.0))
+                            .rounded_full()
+                            .bg(gpui::rgb(0x0A84FF).opacity(0.14))
+                            .text_color(gpui::rgb(0x0A84FF))
+                            .text_xs()
+                            .child(version)
+                    }))
             }));
 
         let content = self.render_pane(cx);
@@ -830,6 +878,11 @@ impl SettingsView {
                     );
                 }
                 rows.push(note("开关修改后重启应用生效"));
+            }
+            Pane::Updates => {
+                if let Some(store) = &self.updater {
+                    rows.push(updater::render_updates_panel(store, cx));
+                }
             }
         }
 

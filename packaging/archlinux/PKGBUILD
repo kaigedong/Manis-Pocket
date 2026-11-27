@@ -18,7 +18,7 @@ sha256sums=()
 
 build() {
   cd "$startdir/../.."
-  CARGO_TARGET_DIR="$srcdir/target" cargo build --release --locked -p manis-pocket-app
+  MANIS_POCKET_VERSION="$pkgver" CARGO_TARGET_DIR="$srcdir/target" cargo build --release --locked -p manis-pocket-app
 }
 
 check() {

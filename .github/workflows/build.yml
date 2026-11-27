@@ -123,6 +123,8 @@ jobs:
         run: cargo clippy -p manis-pocket-app --all-targets -- -D warnings
 
       - name: Build
+        env:
+          MANIS_POCKET_VERSION: ${{ needs.version.outputs.version }}
         run: cargo build --release -p manis-pocket-app
 
       - name: Package

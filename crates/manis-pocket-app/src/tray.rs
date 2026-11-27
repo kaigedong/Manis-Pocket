@@ -30,6 +30,7 @@ pub enum TrayCommand {
     Toggle(Option<TrayAnchor>),
     Open,
     Settings,
+    CheckUpdates,
     Quit,
 }
 
@@ -80,9 +81,11 @@ mod macos {
         let menu = Menu::new();
         let open_item = MenuItem::new("打开 Manis Pocket", true, None);
         let settings_item = MenuItem::new("设置…", true, None);
+        let updates_item = MenuItem::new("检查更新…", true, None);
         let quit_item = MenuItem::new("退出 Manis Pocket", true, None);
         if menu.append(&open_item).is_err()
             || menu.append(&settings_item).is_err()
+            || menu.append(&updates_item).is_err()
             || menu.append(&PredefinedMenuItem::separator()).is_err()
             || menu.append(&quit_item).is_err()
         {
@@ -144,6 +147,7 @@ mod macos {
 
         let open_id = open_item.id().clone();
         let settings_id = settings_item.id().clone();
+        let updates_id = updates_item.id().clone();
         let quit_id = quit_item.id().clone();
         std::thread::spawn(move || {
             use tray_icon::menu::MenuEvent;
@@ -152,6 +156,8 @@ mod macos {
                     TrayCommand::Open
                 } else if event.id == settings_id {
                     TrayCommand::Settings
+                } else if event.id == updates_id {
+                    TrayCommand::CheckUpdates
                 } else if event.id == quit_id {
                     TrayCommand::Quit
                 } else {
@@ -278,6 +284,14 @@ mod linux {
                     label: "设置…".into(),
                     activate: Box::new(|item: &mut Self| {
                         let _ = item.tx.unbounded_send(TrayCommand::Settings);
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+                StandardItem {
+                    label: "检查更新…".into(),
+                    activate: Box::new(|item: &mut Self| {
+                        let _ = item.tx.unbounded_send(TrayCommand::CheckUpdates);
                     }),
                     ..Default::default()
                 }

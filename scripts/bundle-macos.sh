@@ -25,10 +25,10 @@ OUT="$REPO/build/$APP_NAME.app"
 
 cd "$REPO"
 if [ "$PROFILE" = release ]; then
-  cargo build --release -p manis-pocket-app
+  MANIS_POCKET_VERSION="$VERSION" cargo build --release -p manis-pocket-app
   BINARY="$REPO/target/release/manis-pocket"
 else
-  cargo build -p manis-pocket-app
+  MANIS_POCKET_VERSION="$VERSION" cargo build -p manis-pocket-app
   BINARY="$REPO/target/debug/manis-pocket"
 fi
 

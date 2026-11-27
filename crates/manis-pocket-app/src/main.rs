@@ -9,6 +9,7 @@
 #![allow(unused_unsafe)]
 
 mod about;
+mod app_update;
 #[cfg(target_os = "linux")]
 mod apps_linux;
 mod clipboard;
@@ -23,6 +24,7 @@ mod settings;
 mod settings_ui;
 mod sync_runtime;
 mod tray;
+mod updater;
 
 use panel::{HistoryPanel, PANEL_MARGIN, copy_entry_to_clipboard};
 
@@ -145,9 +147,19 @@ fn exit_after(delivered: bool) {
 
 /// Opens the settings window.
 fn open_settings(cx: &mut App) {
+    open_settings_pane(cx, None);
+}
+
+/// Opens the settings window, optionally switching straight to a specific pane.
+fn open_settings_pane(cx: &mut App, initial_pane: Option<settings_ui::Pane>) {
     if let Some(id) = settings_window_id() {
         for handle in cx.windows() {
             if handle.window_id() == id {
+                if let Some(pane) = initial_pane
+                    && let Some(typed) = handle.downcast::<settings_ui::SettingsView>()
+                {
+                    let _ = typed.update(cx, |view, _, cx| view.set_pane(pane, cx));
+                }
                 let _ = handle.update(cx, |_, window, _| window.activate_window());
                 cx.activate(true);
                 return;
@@ -170,7 +182,7 @@ fn open_settings(cx: &mut App) {
         move |window, cx| {
             let database = database.clone();
             let history = history();
-            cx.new(|cx| settings_ui::SettingsView::new(database, history, window, cx))
+            cx.new(|cx| settings_ui::SettingsView::new(database, history, initial_pane, window, cx))
         },
     );
     match opened {
@@ -220,7 +232,7 @@ fn open_about(cx: &mut App) {
         // The window is gone but its id was not cleared; forget it and start over.
         set_about_window(None);
     }
-    let bounds = Bounds::centered(None, size(px(440.0), px(300.0)), cx);
+    let bounds = Bounds::centered(None, size(px(440.0), px(356.0)), cx);
     let opened = gpui_kit::open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -242,7 +254,7 @@ fn open_about(cx: &mut App) {
             ..Default::default()
         },
         cx,
-        |_window, cx| cx.new(|_| about::AboutView),
+        |_window, cx| cx.new(about::AboutView::new),
     );
     match opened {
         Ok((handle, _)) => {
@@ -687,6 +699,19 @@ fn main() {
 
             start_clipboard_capture(cx, history(), storage_path());
 
+            let updater_store = updater::init(cx);
+            updater_store.update(cx, |updater, cx| updater.maybe_auto_check(cx));
+            let periodic_updater = updater_store.clone();
+            cx.spawn(async move |cx| {
+                const CHECK_INTERVAL: std::time::Duration =
+                    std::time::Duration::from_secs(6 * 3600);
+                loop {
+                    cx.background_executor().timer(CHECK_INTERVAL).await;
+                    periodic_updater.update(cx, |updater, cx| updater.maybe_auto_check(cx));
+                }
+            })
+            .detach();
+
             if open_settings_at_launch {
                 open_settings(cx);
             } else if std::env::var_os("MANIS_POCKET_ABOUT").is_some() {
@@ -737,6 +762,12 @@ fn main() {
                             }),
                             tray::TrayCommand::Open => cx.update(open_panel_if_needed),
                             tray::TrayCommand::Settings => cx.update(open_settings),
+                            tray::TrayCommand::CheckUpdates => cx.update(|cx| {
+                                open_settings_pane(cx, Some(settings_ui::Pane::Updates));
+                                if let Some(store) = updater::entity(cx) {
+                                    store.update(cx, |updater, cx| updater.check_for_update(cx));
+                                }
+                            }),
                             tray::TrayCommand::Quit => cx.update(|cx| cx.quit()),
                         }
                     }
@@ -882,7 +913,17 @@ mod asset_tests {
     #[test]
     fn the_row_actions_have_icons() {
         let assets = gpui_kit::assets::AllAssets::new("");
-        for path in ["icons/pin.svg", "icons/pin-off.svg", "icons/trash.svg"] {
+        for path in [
+            "icons/pin.svg",
+            "icons/pin-off.svg",
+            "icons/trash.svg",
+            "icons/arrow-up.svg",
+            "icons/arrow-down.svg",
+            "icons/refresh-cw.svg",
+            "icons/check.svg",
+            "icons/x.svg",
+            "icons/external-link.svg",
+        ] {
             assert!(
                 assets.load(path).is_ok(),
                 "{path} is missing from the registered asset source"

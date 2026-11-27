@@ -53,6 +53,8 @@ pub(crate) struct HistoryPanel {
     /// Where the hover card's and the sidebar's pictures were laid out.
     card_probe: zoom::BoundsCell,
     sidebar_probe: zoom::BoundsCell,
+    /// Shared app updater state for the Manis-style top-bar update pill.
+    updater: Option<Entity<updater::UpdateStore>>,
 }
 
 impl HistoryPanel {
@@ -147,6 +149,11 @@ impl HistoryPanel {
         })
         .detach();
 
+        let updater = updater::entity(cx);
+        if let Some(store) = &updater {
+            cx.observe(store, |_, _, cx| cx.notify()).detach();
+        }
+
         Self {
             history,
             all_items,
@@ -176,6 +183,7 @@ impl HistoryPanel {
             detail_loading: std::collections::HashSet::new(),
             card_probe: zoom::BoundsCell::default(),
             sidebar_probe: zoom::BoundsCell::default(),
+            updater,
         }
     }
 
@@ -1042,6 +1050,12 @@ impl Render for HistoryPanel {
         let count = self.visible_count;
         let checked = self.checked.len();
         let hover_card = self.render_hover_card(window, cx);
+        let update_pill = self
+            .updater
+            .as_ref()
+            .and_then(|store| updater::header_update_pill(store, cx));
+        let show_header =
+            self.settings.show_search || self.settings.show_title || update_pill.is_some();
 
         div()
             .relative()
@@ -1142,37 +1156,43 @@ impl Render for HistoryPanel {
                                 v_flex()
                                     .flex_1()
                                     .h_full()
-                                    .children(
-                                        (self.settings.show_search || self.settings.show_title)
-                                            .then(|| {
-                                                h_flex()
-                                                    .gap_2()
-                                                    .items_center()
-                                                    .px_3()
-                                                    .pt_2p5()
-                                                    .pb_2()
-                                                    .children(self.settings.show_title.then(|| {
-                                                        div()
-                                                            .text_sm()
-                                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                            .flex_shrink_0()
-                                                            .child(SharedString::from("Manis Pocket"))
-                                                    }))
-                                                    .children(self.settings.show_search.then(|| {
-                                                        div()
-                                                            .flex_1()
-                                                            .rounded(px(6.0))
-                                                            .bg(gpui::rgb(0xF2F2F4))
-                                                            .px_2()
-                                                            .py_0p5()
-                                                            .child(
-                                                                Input::new(&self.input)
-                                                                    .appearance(false),
-                                                            )
-                                                    }))
-                                                    .into_any_element()
-                                            }),
-                                    )
+                                    .children(show_header.then(|| {
+                                        let mut header = h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .px_3()
+                                            .pt_2p5()
+                                            .pb_2();
+                                        if !self.settings.show_search {
+                                            header = if self.settings.show_title {
+                                                header.justify_between()
+                                            } else {
+                                                header.justify_end()
+                                            };
+                                        }
+                                        header
+                                            .children(self.settings.show_title.then(|| {
+                                                div()
+                                                    .text_sm()
+                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                    .flex_shrink_0()
+                                                    .child(SharedString::from("Manis Pocket"))
+                                            }))
+                                            .children(self.settings.show_search.then(|| {
+                                                div()
+                                                    .flex_1()
+                                                    .min_w(px(0.0))
+                                                    .rounded(px(6.0))
+                                                    .bg(gpui::rgb(0xF2F2F4))
+                                                    .px_2()
+                                                    .py_0p5()
+                                                    .child(
+                                                        Input::new(&self.input).appearance(false),
+                                                    )
+                                            }))
+                                            .children(update_pill)
+                                            .into_any_element()
+                                    }))
                                     .children(self.render_app_filter(cx))
                                     .child(div().flex_1().px_2().child(List::new(&self.list)))
                                     .children(

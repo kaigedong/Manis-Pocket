@@ -21,6 +21,7 @@ use std::path::PathBuf;
 #[derive(Clone, Debug)]
 pub enum IpcCommand {
     Toggle,
+    RefreshPanel,
     Pair(String),
     Accept { peer_id: String, pin: String },
     Connect(String),
@@ -72,6 +73,11 @@ pub fn listen(database: &str, tx: UnboundedSender<IpcCommand>) -> bool {
         }
         Err(_) => return false,
     };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
 
     std::thread::spawn(move || {
         for stream in listener.incoming() {

@@ -12,10 +12,13 @@ mod about;
 mod app_update;
 #[cfg(target_os = "linux")]
 mod apps_linux;
+mod cli;
 mod clipboard;
+mod control_api;
 mod icons;
 mod ignore;
 mod ipc;
+mod mcp;
 mod panel;
 mod peers;
 mod placement;
@@ -558,22 +561,27 @@ fn register_symbol_font(cx: &mut App) {
     let _ = cx;
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     // The core and sync crates log through `log`; without a logger that output
     // is discarded, which makes network problems invisible. `RUST_LOG=debug`
     // turns it on.
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
+    // Headless Agent CLI & stdio MCP server: runs without opening a window.
+    if let Some(code) = cli::try_run_from_env() {
+        return code;
+    }
+
     // `manis-pocket --toggle` is what a compositor binding should call. When no
     // instance is running it falls through and starts the app normally.
     if std::env::args().any(|arg| arg == "--toggle") && ipc::send_toggle(&storage_path()) {
-        return;
+        return std::process::ExitCode::SUCCESS;
     }
     let open_settings_at_launch = std::env::args().any(|arg| arg == "--settings");
 
     if std::env::args().any(|arg| arg == "--probe-app") {
         println!("{:?}", source_application());
-        return;
+        return std::process::ExitCode::SUCCESS;
     }
 
     // `--database <path>` lets a detached launch use a scratch history instead of
@@ -623,7 +631,7 @@ fn main() {
             }
             let ok = !parts.is_empty() && crate::clipboard::write_text(&parts.join("\n"));
             println!("{ok}");
-            return;
+            return std::process::ExitCode::SUCCESS;
         }
 
         if arg == "--copy"
@@ -633,7 +641,7 @@ fn main() {
                 .map(|history| copy_entry_to_clipboard(&history, &id))
                 .unwrap_or(false);
             println!("{ok}");
-            return;
+            return std::process::ExitCode::SUCCESS;
         }
     }
 
@@ -644,20 +652,23 @@ fn main() {
     if let Some(index) = flag("--pair")
         && let Some(peer_id) = args.get(index + 1)
     {
-        return exit_after(ipc::send(&storage_path(), &format!("pair {peer_id}")));
+        exit_after(ipc::send(&storage_path(), &format!("pair {peer_id}")));
+        return std::process::ExitCode::SUCCESS;
     }
     if let Some(index) = flag("--accept")
         && let (Some(peer_id), Some(pin)) = (args.get(index + 1), args.get(index + 2))
     {
-        return exit_after(ipc::send(
+        exit_after(ipc::send(
             &storage_path(),
             &format!("accept {peer_id} {pin}"),
         ));
+        return std::process::ExitCode::SUCCESS;
     }
     if let Some(index) = flag("--connect")
         && let Some(address) = args.get(index + 1)
     {
-        return exit_after(ipc::send(&storage_path(), &format!("connect {address}")));
+        exit_after(ipc::send(&storage_path(), &format!("connect {address}")));
+        return std::process::ExitCode::SUCCESS;
     }
 
     let shared_history =
@@ -705,7 +716,17 @@ fn main() {
 
             // A second launch asks this instance to toggle instead of starting up.
             let (ipc_tx, mut ipc_rx) = futures::channel::mpsc::unbounded();
-            ipc::listen(&storage_path(), ipc_tx);
+            ipc::listen(&storage_path(), ipc_tx.clone());
+
+            // Local JSON Control API (`agent.sock`, 0o600) for CLI & MCP tools.
+            let refresh_tx = ipc_tx;
+            control_api::listen(
+                storage_path(),
+                history(),
+                Arc::new(move || {
+                    let _ = refresh_tx.unbounded_send(ipc::IpcCommand::RefreshPanel);
+                }),
+            );
 
             start_clipboard_capture(cx, history(), storage_path());
 
@@ -745,6 +766,19 @@ fn main() {
                         eprintln!("[ipc] {command:?}");
                         match command {
                             ipc::IpcCommand::Toggle => cx.update(toggle_panel),
+                            ipc::IpcCommand::RefreshPanel => cx.update(|cx| {
+                                if let Some(id) = panel_window_id() {
+                                    for handle in cx.windows() {
+                                        if handle.window_id() == id
+                                            && let Some(typed) = handle.downcast::<HistoryPanel>()
+                                        {
+                                            let _ = typed.update(cx, |panel, _, cx| {
+                                                panel.reload_history(cx)
+                                            });
+                                        }
+                                    }
+                                }
+                            }),
                             ipc::IpcCommand::Pair(peer_id) => {
                                 sync_runtime::remember_pairing(&peer_id);
                                 history().sync_request_pairing(peer_id);
@@ -791,6 +825,7 @@ fn main() {
 
             cx.activate(true);
         });
+    std::process::ExitCode::SUCCESS
 }
 
 /// Which application owns the copy, when the platform can say.

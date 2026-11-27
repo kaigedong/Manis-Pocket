@@ -211,6 +211,15 @@ impl HistoryPanel {
         }
     }
 
+    /// Reloads settings and history metadata from SQLite (called when an agent
+    /// mutates clipboard state through the live Control API).
+    pub(crate) fn reload_history(&mut self, cx: &mut Context<Self>) {
+        self.settings = settings::Settings::load(&storage_path());
+        self.all_items = self.history.load_metadata().unwrap_or_default();
+        self.refresh(cx);
+        cx.notify();
+    }
+
     /// A peer changed the history (or the network state): reload and redraw.
     fn on_sync_notice(&mut self, notice: sync_runtime::SyncNotice, cx: &mut Context<Self>) {
         match notice {
